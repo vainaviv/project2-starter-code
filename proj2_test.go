@@ -43,6 +43,52 @@ func TestInit(t *testing.T) {
 	// You probably want many more tests here.
 }
 
+func TestGet(t *testing.T) {
+	clear()
+	t.Log("GetUser test")
+
+	// You can set this to false!
+	userlib.SetDebugStatus(true)
+
+	_, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	_, e := GetUser("alice", "fubar")
+
+	if e != nil {
+		t.Error("Failed to get user", e)
+		return
+	}
+
+	_, e = GetUser("alice", "kkkk")
+
+	if e == nil {
+		t.Error("Failed to recognize wrong password.", e)
+		return
+	}
+
+	_, e = GetUser("alicea", "fubar")
+
+	if e == nil {
+		t.Error("Failed to recognize wrong username.", e)
+		return
+	}
+
+	_, e = GetUser("alisce", "kkkk")
+
+	if e == nil {
+		t.Error("Failed to recognize wrong username and password.", e)
+		return
+	}
+
+
+
+}
+
 func TestStorage(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")

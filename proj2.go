@@ -76,9 +76,19 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 	return
 }
 
+//Add helper function to generate padding
+
 // User is the structure definition for a user record.
 type User struct {
 	Username string
+	Secret_key []byte
+	HMAC_sk []byte
+	Signing_sk []byte
+	HMAC_sign_sk []byte
+	File_loc_sk []byte //secret key for HMACing file location to check if pointer switch
+	HMAC_file []byte	//HMAC of above
+	Files map[string][]byte //Hashmap of files: filename → accesstoken|HMAC(file_location)
+
 
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
@@ -91,8 +101,51 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdataptr = &userdata
 
 	//TODO: This is a toy implementation.
+	user_enckey := username + "_enckey"
+	//Check if username already exists
+	_, ok := userlib.KeystoreGet(user_enckey)
+	if ok {
+		return nil, errors.New(strings.ToTitle("Username already exists."))
+	}
+
+	if len(username) <= 0 {
+		return nil, errors.New(strings.ToTitle("Username length is not valid."))
+	}
+
 	userdata.Username = username
-	//End of toy implementation
+	pwd_bytes := []byte(password)
+
+	public_key, secret_key, _ := userlib.PKEKeyGen()
+
+	IV_enc := userlib.RandomBytes(16)
+	pk, _ := json.Marshal(public_key)
+	salt, _ := userlib.HMACEval(pk[0:16], []byte(username))
+	//TODO: Check keylen later if necessary - secret keys using keylen = 32, hmacs using keylen = 16
+	userlib.KeystoreSet(user_enckey, public_key)
+	sk_1, err := json.Marshal(secret_key)
+	//userdata.Secret_key
+	userdata.Secret_key = userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_enc, sk_1)
+	//sk_2, _ := json.Marshal(userdata.Secret_key)
+	userdata.HMAC_sk, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.Secret_key)
+
+	signing_sk, signing_verk, _ := userlib.DSKeyGen()
+
+	user_verkey := username + "_verkey"
+	IV_sign := userlib.RandomBytes(16)
+	userlib.KeystoreSet(user_verkey, signing_verk)
+	sk_3, _ := json.Marshal(signing_sk)
+
+
+	userdata.Signing_sk = userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_sign, sk_3)
+  userdata.HMAC_sign_sk, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.Signing_sk)
+
+	userdata.File_loc_sk = userlib.RandomBytes(16)
+	userdata.HMAC_file, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.File_loc_sk)
+
+	userbytes, _ := json.Marshal(userdata)
+	hash := userlib.Hash([]byte(username + password))
+	slicehash := hash[:]
+	userlib.DatastoreSet(bytesToUUID(slicehash), userbytes) //store user struct (or address?) in datastore
 
 	return &userdata, nil
 }
@@ -103,7 +156,55 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdataptr = &userdata
 
-	return userdataptr, nil
+	user_enckey := username + "_enckey"
+	user_verkey := username + "_verkey"
+
+	public_key, ok_enc := userlib.KeystoreGet(user_enckey)
+	_, ok_sign := userlib.KeystoreGet(user_verkey)
+
+	if ok_enc && ok_sign {
+	//user has been initialized
+	//do we need to check both enckey and verkey? what are security implications if one exists and other doesn’t?
+		hash := userlib.Hash([]byte(username + password))
+		slicehash := hash[:]
+		user, ok := userlib.DatastoreGet(bytesToUUID(slicehash))
+
+		if !ok {
+			//username & pwd don’t match (or this combo not in datastore -- which should mean they don’t match)
+			return nil, errors.New(strings.ToTitle("Username and password don't match."))
+		}
+
+		_ = json.Unmarshal(user, userdataptr)
+//check integrity of user struct & malicious action?
+	//check that:
+		pk, _ := json.Marshal(public_key)
+		salt, _ := userlib.HMACEval(pk, []byte(username))
+
+		sec_key, _ := json.Marshal(userdata.Secret_key)
+		sign_key, _ := json.Marshal(userdata.Signing_sk)
+		loc_key, _ := json.Marshal(userdata.File_loc_sk)
+
+		HMAC_enc, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), sec_key)
+		HMAC_sign, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), sign_key)
+		HMAC_file, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), loc_key)
+
+		if ! userlib.HMACEqual(HMAC_enc, userdata.HMAC_sk) {
+			return nil, errors.New(strings.ToTitle("HMAC of encryption keys don't match."))
+		}
+		if ! userlib.HMACEqual(HMAC_sign, userdata.HMAC_sign_sk) {
+			return nil, errors.New(strings.ToTitle("HMAC of signing keys don't match."))
+		}
+		if ! userlib.HMACEqual(HMAC_file, userdata.HMAC_file) {
+			return nil, errors.New(strings.ToTitle("HMAC of file location encryption keys don't match."))
+		}
+
+		//userdataptr = &user
+		return userdataptr, nil
+
+	} else {
+		return nil, errors.New(strings.ToTitle("User has not been initialized."))
+	}
+
 }
 
 // StoreFile is documented at:
