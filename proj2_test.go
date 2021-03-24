@@ -41,6 +41,27 @@ func TestInit(t *testing.T) {
 	// If you want to comment the line above,
 	// write _ = u here to make the compiler happy
 	// You probably want many more tests here.
+
+	u, err = InitUser("alice", "pingpong")
+	if err == nil {
+		// t.Error says the test fails
+		t.Error("Failed to recognize a taken username", err)
+		return
+	}
+
+	u, err = InitUser("", "pingpong")
+	if err == nil {
+		// t.Error says the test fails
+		t.Error("Failed to recognize an invalid empty username", err)
+		return
+	}
+
+	u, err = InitUser("bob", "pingpong")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to successfully create new user", err)
+		return
+	}
 }
 
 func TestGet(t *testing.T) {
@@ -84,8 +105,6 @@ func TestGet(t *testing.T) {
 		t.Error("Failed to recognize wrong username and password.", e)
 		return
 	}
-
-
 
 }
 

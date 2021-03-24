@@ -76,23 +76,58 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 	return
 }
 
-//Add helper function to generate padding
+
+type Node struct {
+	Username string
+	User_invite_loc []byte //encrypted with the root/owner's public key
+	Children []*Node
+}
+
+type Tree struct {
+	root *Node
+}
 
 // User is the structure definition for a user record.
 type User struct {
+	password string
 	Username string
 	Secret_key []byte
 	HMAC_sk []byte
 	Signing_sk []byte
 	HMAC_sign_sk []byte
-	File_loc_sk []byte //secret key for HMACing file location to check if pointer switch
-	HMAC_file []byte	//HMAC of above
-	Files map[string][]byte //Hashmap of files: filename → accesstoken|HMAC(file_location)
-
+	//File_loc_sk []byte //secret key for HMACing file location to check if pointer switch
+	//HMAC_loc []byte	//HMAC of above
+	Files map[string][][]byte //Hashmap of files: filename → accesstoken|HMAC(file_location)
+	HMAC_files []byte
 
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
+}
+
+type File struct {
+	Data []byte
+	End_pointer *byte
+	Participants Tree 
+	Data_HMAC []byte
+	Participants_HMAC []byte
+	Ep_HMAC []byte
+	File_ID []byte
+}
+
+func Padding(msg []byte) (padded_msg []byte) {
+	msg_len := len(msg)
+	padding := 16 - msg_len % 16
+	for i := 0; i < padding; i+=1 {
+		msg = append(msg, byte(padding))
+	}
+	return msg
+}
+
+func Unpad(ciphertext []byte) (unpadded_msg []byte) {
+	padding := int(ciphertext[len(ciphertext)-1])
+	unpadded_msg = ciphertext[0:len(ciphertext) - padding]
+	return unpadded_msg
 }
 
 // InitUser will be called a single time to initialize a new user.
@@ -124,6 +159,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(user_enckey, public_key)
 	sk_1, err := json.Marshal(secret_key)
 	//userdata.Secret_key
+	sk_1 = Padding(sk_1)
 	userdata.Secret_key = userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_enc, sk_1)
 	//sk_2, _ := json.Marshal(userdata.Secret_key)
 	userdata.HMAC_sk, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.Secret_key)
@@ -135,12 +171,17 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(user_verkey, signing_verk)
 	sk_3, _ := json.Marshal(signing_sk)
 
-
+	sk_3 = Padding(sk_3)
 	userdata.Signing_sk = userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_sign, sk_3)
-  userdata.HMAC_sign_sk, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.Signing_sk)
+  	userdata.HMAC_sign_sk, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.Signing_sk)
 
-	userdata.File_loc_sk = userlib.RandomBytes(16)
-	userdata.HMAC_file, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.File_loc_sk)
+	//IV_loc := userlib.RandomBytes(16)
+	//userdata.File_loc_sk = userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_loc, userlib.RandomBytes(16))
+	//userdata.HMAC_loc, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.File_loc_sk)
+
+	userdata.Files = make(map[string][][]byte)
+	files_marshal, _ := json.Marshal(userdata.Files)
+	userdata.HMAC_files, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), files_marshal)
 
 	userbytes, _ := json.Marshal(userdata)
 	hash := userlib.Hash([]byte(username + password))
@@ -178,15 +219,11 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 //check integrity of user struct & malicious action?
 	//check that:
 		pk, _ := json.Marshal(public_key)
-		salt, _ := userlib.HMACEval(pk, []byte(username))
+		salt, _ := userlib.HMACEval(pk[0:16], []byte(username))
 
-		sec_key, _ := json.Marshal(userdata.Secret_key)
-		sign_key, _ := json.Marshal(userdata.Signing_sk)
-		loc_key, _ := json.Marshal(userdata.File_loc_sk)
-
-		HMAC_enc, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), sec_key)
-		HMAC_sign, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), sign_key)
-		HMAC_file, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), loc_key)
+		HMAC_enc, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), userdata.Secret_key)
+		HMAC_sign, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), userdata.Signing_sk)
+		//HMAC_loc, _ := userlib.HMACEval(userlib.Argon2Key([]byte(password), salt, 16), userdata.File_loc_sk)
 
 		if ! userlib.HMACEqual(HMAC_enc, userdata.HMAC_sk) {
 			return nil, errors.New(strings.ToTitle("HMAC of encryption keys don't match."))
@@ -194,11 +231,9 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		if ! userlib.HMACEqual(HMAC_sign, userdata.HMAC_sign_sk) {
 			return nil, errors.New(strings.ToTitle("HMAC of signing keys don't match."))
 		}
-		if ! userlib.HMACEqual(HMAC_file, userdata.HMAC_file) {
-			return nil, errors.New(strings.ToTitle("HMAC of file location encryption keys don't match."))
-		}
-
-		//userdataptr = &user
+		//if ! userlib.HMACEqual(HMAC_loc, userdata.HMAC_loc) {
+		//	return nil, errors.New(strings.ToTitle("HMAC of file location encryption keys don't match."))
+		//}
 		return userdataptr, nil
 
 	} else {
@@ -210,11 +245,49 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 // StoreFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/storefile.html
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
+	var filedata File
+	//filedataptr := &filedata
+
+	storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+
+	file_symm := userlib.RandomBytes(16)
+	data = Padding(data)
+	iv := userlib.RandomBytes(16)
+	filedata.Data = userlib.SymEnc(file_symm, iv, data)
+	filedata.End_pointer = &filedata.Data[len(filedata.Data)-1]
+
+	ep_marshal, _ := json.Marshal(filedata.End_pointer)
+	filedata.Ep_HMAC, _ = userlib.HMACEval(file_symm, ep_marshal)
+	filedata.Data_HMAC, _ = userlib.HMACEval(file_symm, filedata.Data)
+	pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
+
+	//f_ptr, _ := json.Marshal(filedataptr)
+	//enc_file_pointer, _ := userlib.PKEEnc(pk, f_ptr)
+	enc_file_symm, _ := userlib.PKEEnc(pk, file_symm)
+	//salt, _ := userlib.HMACEval(pk[0:16], []byte(username))
+	//key_HMAC_loc := userlib.SymDec(userlib.Argon2Key(pwd_bytes, salt, 32), userdata.File_loc_sk)
+	file_id := userlib.RandomBytes(16)
+	enc_file_id, _ := userlib.PKEEnc(pk, file_id)
+	iv = userlib.RandomBytes(16)
+	filedata.File_ID = userlib.SymEnc(file_symm, iv, file_id)
+	userdata.Files[filename] = [][]byte{enc_file_symm, enc_file_id}
+	var usernode Node
+	usernodeptr := &usernode
+	usernode.Username = userdata.Username 
+	usernode.User_invite_loc = nil
+	usernode.Children = nil
+	filedata.Participants.root = usernodeptr
+
+	participants_marshal, _ := json.Marshal(filedata.Participants)
+	filedata.Participants_HMAC, _ = userlib.HMACEval(file_symm, participants_marshal)
+
+	jsonData, _ := json.Marshal(filedata)
+	userlib.DatastoreSet(storageKey, jsonData)
 
 	//TODO: This is a toy implementation.
-	storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
-	jsonData, _ := json.Marshal(data)
-	userlib.DatastoreSet(storageKey, jsonData)
+	// storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+	// jsonData, _ := json.Marshal(data)
+	// userlib.DatastoreSet(storageKey, jsonData)
 	//End of toy implementation
 
 	return
@@ -230,14 +303,60 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/loadfile.html
 func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
-	//TODO: This is a toy implementation.
 	storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
 	dataJSON, ok := userlib.DatastoreGet(storageKey)
 	if !ok {
 		return nil, errors.New(strings.ToTitle("File not found!"))
 	}
-	json.Unmarshal(dataJSON, &dataBytes)
+	var filedata File
+	filedataptr := &filedata
+	json.Unmarshal(dataJSON, filedataptr)
+
+	keys := userdata.Files[filename]
+	enc_file_symm, enc_file_id := keys[0], keys[1]
+	public_key, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
+	pk, _ := json.Marshal(public_key)
+	salt, _ := userlib.HMACEval(pk[0:16], []byte(userdata.Username))
+	secret_key_byte := userlib.SymDec(userlib.Argon2Key([]byte(userdata.password), salt, 32), userdata.Secret_key)
+	var secret_key userlib.PrivateKeyType
+	json.Unmarshal(secret_key_byte, &secret_key)
+	file_id, _ := userlib.PKEDec(secret_key, enc_file_id) 
+	file_symm, _ := userlib.PKEDec(secret_key, enc_file_symm)
+	stored_file_id := userlib.SymDec(file_symm, filedata.File_ID)
+	file_id_str := string(file_id)
+	stored_file_id_str := string(stored_file_id)
+
+	if file_id_str != stored_file_id_str {
+		return nil, errors.New(strings.ToTitle("Did not retrieve the correct file."))
+	}
+	calc_data_HMAC, _ := userlib.HMACEval(file_symm, filedata.Data)
+	if ! userlib.HMACEqual(calc_data_HMAC, filedata.Data_HMAC) {
+		return nil, errors.New(strings.ToTitle("HMAC of file data don't match."))
+	}
+	ep_marshal, _ := json.Marshal(filedata.End_pointer)
+	calc_ep_HMAC, _ := userlib.HMACEval(file_symm, ep_marshal)
+	if ! userlib.HMACEqual(calc_ep_HMAC, filedata.Ep_HMAC) {
+		return nil, errors.New(strings.ToTitle("HMAC of file end pointers don't match."))
+	}
+	participants_marshal, _ := json.Marshal(filedata.Participants)
+	calc_participants_HMAC, _ := userlib.HMACEval(file_symm, participants_marshal)
+	if ! userlib.HMACEqual(calc_participants_HMAC, filedata.Participants_HMAC) {
+		return nil, errors.New(strings.ToTitle("HMAC of file participants tree don't match."))
+	}
+	dataBytes = userlib.SymDec(file_symm, filedata.Data)
+	dataBytes = Unpad(dataBytes)
 	return dataBytes, nil
+
+	
+
+	//TODO: This is a toy implementation.
+	// storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+	// dataJSON, ok := userlib.DatastoreGet(storageKey)
+	// if !ok {
+	// 	return nil, errors.New(strings.ToTitle("File not found!"))
+	// }
+	// json.Unmarshal(dataJSON, &dataBytes)
+	// return dataBytes, nil
 	//End of toy implementation
 
 	return
