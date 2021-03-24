@@ -247,8 +247,8 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	var filedata File
 	//filedataptr := &filedata
-
-	storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+	key_hash := userlib.Hash([]byte(filename) + userlib.Hash([]byte(userdata.Username)))
+	storageKey, _ := uuid.FromBytes(key_hash[:16])
 
 	file_symm := userlib.RandomBytes(16)
 	data = Padding(data)
@@ -303,7 +303,8 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/loadfile.html
 func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
-	storageKey, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
+	key_hash := userlib.Hash([]byte(filename) + userlib.Hash([]byte(userdata.Username)))
+	storageKey, _ := uuid.FromBytes(key_hash[:16])
 	dataJSON, ok := userlib.DatastoreGet(storageKey)
 	if !ok {
 		return nil, errors.New(strings.ToTitle("File not found!"))
