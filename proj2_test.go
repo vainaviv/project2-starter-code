@@ -121,12 +121,37 @@ func TestStorage(t *testing.T) {
 
 	v2, err2 := u.LoadFile("file1")
 	if err2 != nil {
+
 		t.Error("Failed to upload and download", err2)
 		return
 	}
 	if !reflect.DeepEqual(v, v2) {
 		t.Error("Downloaded file is not the same", v, v2)
 		return
+	}
+
+	u1, _ := InitUser("bob", "password")
+	_, err3 := u1.LoadFile("file1")
+	if err3 == nil {
+		t.Error("Did not detect invalid load.", err3)
+		return
+	}
+
+	_, err4 := u.LoadFile("file2")
+	if err4 == nil {
+		t.Error("Did not detect file DNE.", err4)
+		return
+	}
+
+}
+
+func TestPad(t *testing.T) {
+	clear()
+	msg := []byte("test padding")
+	padded := Padding(msg)
+	unpadded := Unpad(padded)
+	if string(unpadded) != string(msg) {
+		t.Error("padding didn't work", unpadded)
 	}
 }
 
@@ -143,6 +168,27 @@ func TestInvalidFile(t *testing.T) {
 		t.Error("Downloaded a ninexistent file", err2)
 		return
 	}
+}
+
+func TestAppend(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	err1 := u.AppendFile("file1", []byte(" appended data"))
+	if err1 != nil {
+		t.Error("Failed to append", err1)
+		return
+	}
+	//	t.Error("error", err1)
+
+
 }
 
 func TestShare(t *testing.T) {
