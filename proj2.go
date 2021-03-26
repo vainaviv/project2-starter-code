@@ -97,7 +97,7 @@ type User struct {
 	HMAC_sign_sk []byte
 	//File_loc_sk []byte //secret key for HMACing file location to check if pointer switch
 	//HMAC_loc []byte	//HMAC of above
-	Files map[string][][]byte //Hashmap of files: filename → accesstoken|HMAC(file_location)
+	Files map[string][]byte //Hashmap of files: filename → accesstoken|HMAC(file_location)
 	HMAC_files []byte
 
 	// You can add other fields here if you want...
@@ -148,16 +148,15 @@ func TreeSearch(participants Tree, username string) (in_tree bool) {
 	}
 
 	return false
-
 }
 
-func RetrieveFile(userdata *User, filename string) (filedataptr *File, err error){
-	user_hash := userlib.Hash([]byte(userdata.Username))
+func RetrieveFile(username string, filename string) (filedataptr *File, err error){
+	user_hash := userlib.Hash([]byte(username))
 	key_hash := userlib.Hash(append([]byte(filename), user_hash[:]...))
 	storageKey, _ := uuid.FromBytes(key_hash[:16])
 	dataJSON, ok := userlib.DatastoreGet(storageKey)
 	if !ok {
-		return nil, errors.New(strings.ToTitle("File not found!"))
+		return nil, errors.New(strings.ToTitle("File not in Datastore!"))
 	}
 	var filedata File
 	filedataptr = &filedata
@@ -166,9 +165,12 @@ func RetrieveFile(userdata *User, filename string) (filedataptr *File, err error
 	return filedataptr, nil
 }
 
-func RetrieveAccessToken(userdata *User, filename string) (file_id []byte, file_symm []byte) {
-	keys := userdata.Files[filename]
-	enc_file_symm, enc_file_id := keys[0], keys[1]
+func RetrieveAccessToken(userdata *User, filename string) (file_id []byte, file_symm []byte, err error) {
+	keys, ok := userdata.Files[filename]
+	if !ok {
+		return nil, nil, errors.New(strings.ToTitle("File token not in hashmap!"))
+	}
+	enc_file_symm, enc_file_id := keys[0:256], keys[256:]
 	public_key, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
 	pk, _ := json.Marshal(public_key)
 	salt, _ := userlib.HMACEval(pk[0:16], []byte(userdata.Username))
@@ -179,7 +181,7 @@ func RetrieveAccessToken(userdata *User, filename string) (file_id []byte, file_
 
 	file_id, _ = userlib.PKEDec(secret_key, enc_file_id)
 	file_symm, _ = userlib.PKEDec(secret_key, enc_file_symm)
-	return file_id, file_symm
+	return file_symm, file_id, nil
 }
 
 //func (filedata *File) ParticipantCheck(target *User) {
@@ -235,7 +237,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//userdata.File_loc_sk = userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_loc, userlib.RandomBytes(16))
 	//userdata.HMAC_loc, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata.File_loc_sk)
 
-	userdata.Files = make(map[string][][]byte)
+	userdata.Files = make(map[string][]byte)
 	files_marshal, _ := json.Marshal(userdata.Files)
 	userdata.HMAC_files, _ = userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), files_marshal)
 
@@ -305,9 +307,11 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	var filedata File
 
-	user_hash := userlib.Hash([]byte(userdata.Username))
-	key_hash := userlib.Hash(append([]byte(filename), user_hash[:]...))
-	storageKey, _ := uuid.FromBytes(key_hash[:16])
+	//add something to prevent creating a duplicate filename for same user
+	_, ok := userdata.Files[filename] 
+	if ok {
+		return errors.New(strings.ToTitle("This user already has a file with this name."))
+	}
 
 	file_symm := userlib.RandomBytes(16)
 	data = Padding(data)
@@ -316,9 +320,8 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	iv = userlib.RandomBytes(16)
 	ep := []byte{byte(len(filedata.Data))}
 	ep = Padding(ep)
-	filedata.End_pointer = userlib.SymEnc(file_symm, iv, ep)//&filedata.Data[len(filedata.Data)-1]
+	filedata.End_pointer = userlib.SymEnc(file_symm, iv, ep)
 
-	//ep_marshal, _ := json.Marshal(filedata.End_pointer)
 	filedata.Ep_HMAC, _ = userlib.HMACEval(file_symm, filedata.End_pointer)
 	filedata.Data_HMAC, _ = userlib.HMACEval(file_symm, filedata.Data)
 	pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
@@ -328,7 +331,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	enc_file_id, _ := userlib.PKEEnc(pk, file_id)
 	iv = userlib.RandomBytes(16)
 	filedata.File_ID = userlib.SymEnc(file_symm, iv, file_id)
-	userdata.Files[filename] = [][]byte{enc_file_symm, enc_file_id}
+	userdata.Files[filename] = append(enc_file_symm, enc_file_id...)
 	var usernode Node
 	usernodeptr := &usernode
 	usernode.Username = userdata.Username
@@ -344,8 +347,21 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	filedata.Participants = userlib.SymEnc(file_symm, iv, participants_marshal)
 	filedata.Participants_HMAC, _ = userlib.HMACEval(file_symm, filedata.Participants)
 
+	user_hash := userlib.Hash([]byte(userdata.Username))
+	key_hash := userlib.Hash(append([]byte(filename), user_hash[:]...))
+	storageKey, _ := uuid.FromBytes(key_hash[:16])
 	jsonData, _ := json.Marshal(filedata)
 	userlib.DatastoreSet(storageKey, jsonData)
+
+	_, ok = userlib.DatastoreGet(storageKey)
+	if !ok {
+		return errors.New(strings.ToTitle("Data not correctly stored in Datastore."))
+	}
+
+	hash := userlib.Hash([]byte(userdata.Username + userdata.password))
+	slicehash := hash[:]
+	userbytes, _ := json.Marshal(userdata)
+	userlib.DatastoreSet(bytesToUUID(slicehash), userbytes)
 
 	return
 }
@@ -354,8 +370,14 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 //https://cs161.org/assets/projects/2/docs/client_api/appendfile.html
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
-	filedata, _ := RetrieveFile(userdata, filename)
-	_, file_symm := RetrieveAccessToken(userdata, filename)
+	file_symm, _, _ := RetrieveAccessToken(userdata, filename)
+	if file_symm == nil {
+		return errors.New(strings.ToTitle("File not found."))
+	}
+	filedata, err := RetrieveFile(userdata.Username, filename)
+	if err != nil {
+		return err
+	}
 
 	calc_participants_HMAC, _ := userlib.HMACEval(file_symm, filedata.Participants)
 	if ! userlib.HMACEqual(calc_participants_HMAC, filedata.Participants_HMAC) {
@@ -375,26 +397,38 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	end_ptr = Unpad(end_ptr)
 	end_ptr_num := int(end_ptr[0])
 
+	var dataBytes []byte
 	if end_ptr_num <= 32 {
-		dataBytes := userlib.SymDec(file_symm, filedata.Data)
+		dataBytes = userlib.SymDec(file_symm, filedata.Data)
 		dataBytes = Unpad(dataBytes)
 		dataBytes = append(dataBytes, data...)
 		dataBytes = Padding(dataBytes)
 		iv := userlib.RandomBytes(16)
 		filedata.Data = userlib.SymEnc(file_symm, iv, dataBytes)
-
 	} else {
-
 		encrypted_end_data := filedata.Data[end_ptr_num - 32:]
 		iv := encrypted_end_data[:16]
 		tail := encrypted_end_data[16:]
-	
 		tail = userlib.SymDec(file_symm, tail)
 		tail = Unpad(tail)
 		tail = append(tail, data...)
 		tail = Padding(tail)
 		filedata.Data = append(filedata.Data[:end_ptr_num - 16], userlib.SymEnc(file_symm, iv, tail)...)
 	}
+
+	filedata.Data_HMAC, _ = userlib.HMACEval(file_symm, filedata.Data)
+	ep := []byte{byte(len(filedata.Data))}
+	ep = Padding(ep)
+	iv := userlib.RandomBytes(16)
+	filedata.End_pointer = userlib.SymEnc(file_symm, iv, ep)
+	filedata.Ep_HMAC, _ = userlib.HMACEval(file_symm, filedata.End_pointer)
+
+	user_hash := userlib.Hash([]byte(userdata.Username))
+	key_hash := userlib.Hash(append([]byte(filename), user_hash[:]...))
+	storageKey, _ := uuid.FromBytes(key_hash[:16]) //TODO: this storage key does not work for non-owners
+
+	jsonData, _ := json.Marshal(filedata)
+	userlib.DatastoreSet(storageKey, jsonData)
 
 	return nil
 }
@@ -403,11 +437,14 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/loadfile.html
 func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
-	filedata, err := RetrieveFile(userdata, filename)
+	file_symm, file_id, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return nil, err
 	}
-	file_id, file_symm := RetrieveAccessToken(userdata, filename)
+	filedata, err := RetrieveFile(userdata.Username, filename)
+	if err != nil {
+		return nil, err
+	}
 
 	calc_participants_HMAC, _ := userlib.HMACEval(file_symm, filedata.Participants)
 	if ! userlib.HMACEqual(calc_participants_HMAC, filedata.Participants_HMAC) {
@@ -434,7 +471,6 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	if ! userlib.HMACEqual(calc_data_HMAC, filedata.Data_HMAC) {
 		return nil, errors.New(strings.ToTitle("HMAC of file data don't match."))
 	}
-	//ep_marshal, _ := json.Marshal(filedata.End_pointer)
 	calc_ep_HMAC, _ := userlib.HMACEval(file_symm, filedata.End_pointer)
 	if ! userlib.HMACEqual(calc_ep_HMAC, filedata.Ep_HMAC) {
 		return nil, errors.New(strings.ToTitle("HMAC of file end pointers don't match."))
@@ -447,12 +483,51 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	return
 }
 
+
+// Rethink
+// 1. In hashmap, we accessToken (store file_id and file_symm) directly. Instead, they should be in datastore safely stored and the hashmap should have a pointer to it.
+// 2. When we share, we add the person to participants tree along with the location of the accessToken encrypted with the owners PK.
+// 3. How are we storing files in Datastore? What is storagekey? Maybe make file_id storagekey? 
+
 // ShareFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/sharefile.html
 func (userdata *User) ShareFile(filename string, recipient string) (
 	accessToken uuid.UUID, err error) {
+	file_symm, file_id, err := RetrieveAccessToken(userdata, filename)
+	if err != nil{
+		return uuid.Nil, err
+	}
+	filedata, err := RetrieveFile(userdata.Username, filename)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	var participants Tree
+	participants_decrypted := userlib.SymDec(file_symm, filedata.Participants)
+	json.Unmarshal(participants_decrypted, &participants)
 
-	return
+	if !TreeSearch(participants, userdata.Username) {
+		return uuid.Nil, errors.New(strings.ToTitle("This user does not have access to the file."))
+	}
+	recipient_pk, ok := userlib.KeystoreGet(recipient + "_enckey")
+	if !ok {
+		return uuid.Nil, errors.New(strings.ToTitle("Recipient username is incorrect."))
+	}
+	enc_file_symm, _ := userlib.PKEEnc(recipient_pk, file_symm)
+	enc_file_id, _ := userlib.PKEEnc(recipient_pk, file_id)
+	encrypted_file_info := append(enc_file_symm, enc_file_id...)
+
+	public_key, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
+	pk, _ := json.Marshal(public_key)
+	salt, _ := userlib.HMACEval(pk[0:16], []byte(userdata.Username))
+	signing_sk_byte := userlib.SymDec(userlib.Argon2Key([]byte(userdata.password), salt, 32), userdata.Signing_sk)
+	var signing_sk userlib.DSSignKey
+	signing_sk_byte = Unpad(signing_sk_byte)
+	json.Unmarshal(signing_sk_byte, &signing_sk)
+	file_info, _ := userlib.DSSign(signing_sk, encrypted_file_info)
+	
+	accessToken = bytesToUUID(file_info)
+	userlib.DatastoreSet(accessToken, file_info)
+	return accessToken, nil
 }
 
 // ReceiveFile is documented at:

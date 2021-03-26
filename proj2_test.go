@@ -117,11 +117,14 @@ func TestStorage(t *testing.T) {
 	}
 
 	v := []byte("This is a test")
-	u.StoreFile("file1", v)
+	err1 := u.StoreFile("file1", v)
+	if err1 != nil {
+		t.Error("Failed to store.", err1)
+		return
+	}
 
 	v2, err2 := u.LoadFile("file1")
 	if err2 != nil {
-
 		t.Error("Failed to upload and download", err2)
 		return
 	}
@@ -143,6 +146,12 @@ func TestStorage(t *testing.T) {
 		return
 	}
 
+	v = []byte("This is a test")
+	err5 := u.StoreFile("file1", v)
+	if err5 == nil {
+		t.Error("Did not detect duplicate filename.", err5)
+		return
+	}
 }
 
 func TestPad(t *testing.T) {
@@ -181,14 +190,28 @@ func TestAppend(t *testing.T) {
 	v := []byte("This is a test")
 	u.StoreFile("file1", v)
 
+	stored_v, _ := u.LoadFile("file1")
+	if !reflect.DeepEqual(v, stored_v) {
+		t.Error("not matching: ", string(stored_v))
+		return
+	}
+
 	err1 := u.AppendFile("file1", []byte(" appended data"))
 	if err1 != nil {
 		t.Error("Failed to append", err1)
 		return
 	}
-	//	t.Error("error", err1)
-
-
+	
+	expected := []byte("This is a test appended data")
+	loaded, err2 := u.LoadFile("file1")
+	if err2 != nil {
+		t.Error("Failed to load appended file", err2)
+		return
+	}
+	if !reflect.DeepEqual(expected, loaded) {
+		t.Error("Failed to correctly append ", string(loaded))
+		return
+	}
 }
 
 func TestShare(t *testing.T) {
@@ -221,6 +244,7 @@ func TestShare(t *testing.T) {
 		t.Error("Failed to share the a file", err)
 		return
 	}
+
 	err = u2.ReceiveFile("file2", "alice", accessToken)
 	if err != nil {
 		t.Error("Failed to receive the share message", err)
