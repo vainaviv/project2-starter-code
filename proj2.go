@@ -131,7 +131,7 @@ func Unpad(ciphertext []byte) (unpadded_msg []byte) {
 	return unpadded_msg
 }
 
-func TreeSearch(participants Tree, username string) (in_tree bool) {
+func TreeSearch(participants Tree, username string) (node *Node) {
 	queue := make([]*Node, 0)
 	queue = append(queue, participants.Root)
 
@@ -139,7 +139,7 @@ func TreeSearch(participants Tree, username string) (in_tree bool) {
 		next := queue[0]
 		queue = queue[1:]
 		if next.Username == username {
-			return true
+			return next
 		}
 		if len(next.Children) > 0 {
 			for _, child := range next.Children {
@@ -148,7 +148,7 @@ func TreeSearch(participants Tree, username string) (in_tree bool) {
 		}
 	}
 
-	return false
+	return nil
 }
 
 func RetrieveFile(owner_hash []byte, filename string) (filedataptr *File, err error){
@@ -358,16 +358,24 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	accessToken_uuid , _ := uuid.FromBytes(key_hash[:16])
 	userdata.Files[filename] = accessToken_uuid
+	pk_byte, _ := json.Marshal(pk)
+	salt, _ := userlib.HMACEval(pk_byte[0:16], []byte(userdata.Username))
+	files_marshal, _ := json.Marshal(userdata.Files)
+	userdata.HMAC_files, _ = userlib.HMACEval(userlib.Argon2Key([]byte(userdata.password), salt, 16), files_marshal)
+	
 	encrypted_AT, _ := userlib.PKEEnc(pk, accessToken)
 	encrypted_sign, _ := userlib.PKEEnc(pk, signed_accessToken)
 	encrypted_AT = append(encrypted_AT, encrypted_sign...)
 
 	userlib.DatastoreSet(accessToken_uuid, encrypted_AT)
 
+	AT_uuid_marshal, _ := json.Marshal(accessToken_uuid)
+	encrypted_AT_uuid, _ := userlib.PKEEnc(pk, AT_uuid_marshal)
+
 	var usernode Node
 	usernodeptr := &usernode
 	usernode.Username = userdata.Username
-	usernode.User_invite_loc = nil
+	usernode.User_invite_loc = encrypted_AT_uuid
 	usernode.Children = nil
 
 	var participants Tree
@@ -421,7 +429,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	participants_decrypted = Unpad(participants_decrypted)
 	json.Unmarshal(participants_decrypted, &participants)
 
-	if !TreeSearch(participants, userdata.Username) {
+	if TreeSearch(participants, userdata.Username) == nil {
 		return errors.New(strings.ToTitle("User does not have access to this file."))
 	}
 
@@ -488,7 +496,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	participants_decrypted = Unpad(participants_decrypted)
 	json.Unmarshal(participants_decrypted, &participants)
 
-	if !TreeSearch(participants, userdata.Username) {
+	if TreeSearch(participants, userdata.Username) == nil {
 		return nil, errors.New(strings.ToTitle("User does not have access to this file."))
 	}
 
@@ -538,30 +546,36 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 	}
 	var participants Tree
 	participants_decrypted := userlib.SymDec(file_symm, filedata.Participants)
-	json.Unmarshal(participants_decrypted, &participants)
+	participants_decrypted = Unpad(participants_decrypted)
+	err = json.Unmarshal(participants_decrypted, &participants)
+	if err != nil {
+		return uuid.Nil, err
+	}
 
-	if !TreeSearch(participants, userdata.Username) {
+	if TreeSearch(participants, userdata.Username) == nil{
 		return uuid.Nil, errors.New(strings.ToTitle("This user does not have access to the file."))
 	}
 	recipient_pk, ok := userlib.KeystoreGet(recipient + "_enckey")
 	if !ok {
 		return uuid.Nil, errors.New(strings.ToTitle("Recipient username is incorrect."))
 	}
-	enc_file_symm, _ := userlib.PKEEnc(recipient_pk, file_symm)
-	enc_file_id, _ := userlib.PKEEnc(recipient_pk, file_id)
-	encrypted_file_info := append(enc_file_symm, enc_file_id...)
 
-	public_key, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
-	pk, _ := json.Marshal(public_key)
-	salt, _ := userlib.HMACEval(pk[0:16], []byte(userdata.Username))
-	signing_sk_byte := userlib.SymDec(userlib.Argon2Key([]byte(userdata.password), salt, 32), userdata.Signing_sk)
-	var signing_sk userlib.DSSignKey
-	signing_sk_byte = Unpad(signing_sk_byte)
-	json.Unmarshal(signing_sk_byte, &signing_sk)
-	file_info, _ := userlib.DSSign(signing_sk, encrypted_file_info)
+	AT := append(file_symm, file_id...)
+	AT = append(AT, file_owner_hash...)
 
-	accessToken = bytesToUUID(file_info)
-	userlib.DatastoreSet(accessToken, file_info)
+	signing_sk := GetSecretSignKey(userdata)
+	signed_accessToken, _ := userlib.DSSign(signing_sk, AT)
+	
+	user_hash := userlib.Hash(append([]byte(recipient), []byte("accessToken")...))
+	key_hash := userlib.Hash(append([]byte(filename), user_hash[:]...))
+
+	accessToken, _ = uuid.FromBytes(key_hash[:16])
+	encrypted_AT, _ := userlib.PKEEnc(recipient_pk, AT)
+	encrypted_sign, _ := userlib.PKEEnc(recipient_pk, signed_accessToken)
+	encrypted_AT = append(encrypted_AT, encrypted_sign...)
+
+	userlib.DatastoreSet(accessToken, encrypted_AT)
+
 	return accessToken, nil
 }
 
@@ -569,6 +583,64 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 // https://cs161.org/assets/projects/2/docs/client_api/receivefile.html
 func (userdata *User) ReceiveFile(filename string, sender string,
 	accessToken uuid.UUID) error {
+
+	_, ok := userdata.Files[filename]
+	if ok {
+		return errors.New(strings.ToTitle("This user already has a file with this name."))
+	}
+
+	secret_key := GetPKESecretKey(userdata)
+	accessToken_enc, _ := userlib.DatastoreGet(accessToken)
+
+	sender_verkey, _ := userlib.KeystoreGet(sender + "_verkey")
+	accessToken_msg, _ := userlib.PKEDec(secret_key, accessToken_enc[:256])
+	accessToken_sig, _ := userlib.PKEDec(secret_key, accessToken_enc[256:])
+	err := userlib.DSVerify(sender_verkey, accessToken_msg, accessToken_sig) //erroring here
+	if err != nil {
+		return err
+	}
+
+	pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
+	userdata.Files[filename] = accessToken 
+	pk_byte, _ := json.Marshal(pk)
+	salt, _ := userlib.HMACEval(pk_byte[0:16], []byte(userdata.Username))
+	files_marshal, _ := json.Marshal(userdata.Files)
+	userdata.HMAC_files, _ = userlib.HMACEval(userlib.Argon2Key([]byte(userdata.password), salt, 16), files_marshal)
+
+	file_symm, _, file_owner_hash, err := RetrieveAccessToken(userdata, filename)
+	if err != nil{
+		return err
+	}
+	filedata, err := RetrieveFile(file_owner_hash, filename)
+	if err != nil {
+		return err
+	}
+
+	var participants Tree
+	participants_decrypted := userlib.SymDec(file_symm, filedata.Participants)
+	participants_decrypted = Unpad(participants_decrypted)
+	err = json.Unmarshal(participants_decrypted, &participants)
+	if err != nil {
+		return err
+	}
+
+	AT_uuid_marshal, _ := json.Marshal(accessToken)
+	owner_username_enc := participants.Root.Username + "_enckey"
+	owner_pk, _ := userlib.KeystoreGet(owner_username_enc)
+	encrypted_AT_uuid, _ := userlib.PKEEnc(owner_pk, AT_uuid_marshal)
+
+	var usernode Node
+	usernode.Username = userdata.Username
+	usernode.User_invite_loc = encrypted_AT_uuid
+	usernode.Children = nil
+
+	// set this user to be child of sender
+	sender_node := TreeSearch(participants, sender)
+	if sender_node == nil {
+		return errors.New(strings.ToTitle("Sender does not have access to the file."))
+	}
+	sender_node.Children = append(sender_node.Children, &usernode)
+
 	return nil
 }
 
