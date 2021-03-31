@@ -260,4 +260,6 @@ func TestShare(t *testing.T) {
 		t.Error("Shared file is not the same", v, v2)
 		return
 	}
+
+	// share a file, go to that UUID and print out
 }
