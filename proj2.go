@@ -174,7 +174,7 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 }
 
 func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, file_id []byte, file_owner_hash []byte,
-	 																																					owner []byte, err error) {
+	owner []byte, err error) {
 	uuid_accessToken, ok := userdata.Files[filename]
 	if !ok {
 		return nil, nil, nil, nil, errors.New(strings.ToTitle("Access token not in hashmap!"))
@@ -491,7 +491,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/sharefile.html
 func (userdata *User) ShareFile(filename string, recipient string) (
 	accessToken uuid.UUID, err error) {
-	file_symm, file_id, file_owner_hash, _, err := RetrieveAccessToken(userdata, filename)
+	file_symm, file_id, file_owner_hash, owner, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -510,7 +510,7 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 	}
 
 	AT := append(file_symm, file_id...)
-	AT = append(AT, file_owner_hash...)
+	AT = append(AT, owner...)
 
 	signing_sk := userdata.Signing_sk
 
