@@ -239,6 +239,18 @@ func TestShare(t *testing.T) {
 		return
 	}
 
+	// accessToken, err = u.ShareFile("file1", "alice")
+	// if err != nil {
+	// 	t.Error("Failed to share the a file", err)
+	// 	return
+	// }
+
+	// err = u.ReceiveFile("file2", "alice", accessToken)
+	// if err != nil {
+	// 	t.Error("Failed to receive the share message", err)
+	// 	return
+	// }
+
 	accessToken, err = u.ShareFile("file1", "bob")
 	if err != nil {
 		t.Error("Failed to share the a file", err)
