@@ -78,7 +78,7 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 
 type Node struct {
 	Username        string
-	User_invite_loc userlib.UUID //encrypted with the root/owner's public key
+	User_invite_loc []byte //encrypted with the root/owner's public key
 	Children        []*Node
 }
 
@@ -173,15 +173,16 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 	return filedataptr, nil
 }
 
-func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, file_id []byte, file_owner_hash []byte, err error) {
+func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, file_id []byte, file_owner_hash []byte,
+	 																																					owner []byte, err error) {
 	uuid_accessToken, ok := userdata.Files[filename]
 	if !ok {
-		return nil, nil, nil, errors.New(strings.ToTitle("Access token not in hashmap!"))
+		return nil, nil, nil, nil, errors.New(strings.ToTitle("Access token not in hashmap!"))
 	}
 	accessToken_marshaled, ok := userlib.DatastoreGet(uuid_accessToken)
 
 	if !ok {
-		return nil, nil, nil, errors.New(strings.ToTitle("Access Token not in Datastore"))
+		return nil, nil, nil, nil, errors.New(strings.ToTitle("Access Token not in Datastore"))
 	}
 
 	secret_key := userdata.Secret_key
@@ -189,9 +190,14 @@ func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, fil
 	_ = json.Unmarshal(accessToken_marshaled, &AT)
 
 	decrypted_keys, _ := userlib.PKEDec(secret_key, AT.Enc_keys)
+	file_symm, file_id, owner = decrypted_keys[:16], decrypted_keys[16:32], decrypted_keys[32:]
+	file_owner := userlib.Hash(owner)
+	file_owner_hash = file_owner[:]
+	//owner_pk, _ = userlib.KeystoreGet(string(owner))
+	// file_symm, file_id, file_owner_hash = decrypted_keys[:16], decrypted_keys[16:32], decrypted_keys[32:96]
+	// owner_pk = decrypted_keys[96:]
 
-	file_symm, file_id, file_owner_hash = decrypted_keys[:16], decrypted_keys[16:32], decrypted_keys[32:]
-	return file_symm, file_id, file_owner_hash, nil
+	return file_symm, file_id, file_owner_hash, owner, nil
 }
 
 // InitUser will be called a single time to initialize a new user.
@@ -321,8 +327,13 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	owner_hash := userlib.Hash([]byte(userdata.Username))
 
+	// AT := append(file_symm, file_id...)
+	// AT = append(AT, owner_hash[:]...)
+	// owner_pk, _ := json.Marshal(pk)
+	// AT = append(AT, owner_pk...)
+
 	AT := append(file_symm, file_id...)
-	AT = append(AT, owner_hash[:]...)
+	AT = append(AT, []byte(userdata.Username)...)
 
 	signing_sk := userdata.Signing_sk
 
@@ -330,7 +341,10 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	key_hash := userlib.Hash(append(file_id, user_hash[:]...))
 
 	accessToken, _ := uuid.FromBytes(key_hash[:16])
-	encrypted_AT, _ := userlib.PKEEnc(pk, AT)
+	encrypted_AT, err := userlib.PKEEnc(pk, AT)
+	if err != nil {
+		return err
+	}
 	signed_enc_AT, _ := userlib.DSSign(signing_sk, encrypted_AT)
 
 	var encrypted_AT_struct AccessToken
@@ -341,11 +355,13 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	userlib.DatastoreSet(accessToken, encrypted_AT_marshaled)
 
 	userdata.Files[filename] = accessToken
+	invite_AT, _ := json.Marshal(accessToken)
+	invite_AT_enc, _ := userlib.PKEEnc(pk, invite_AT)
 
 	var usernode Node
 	usernodeptr := &usernode
 	usernode.Username = userdata.Username
-	usernode.User_invite_loc = accessToken
+	usernode.User_invite_loc = invite_AT_enc
 	usernode.Children = nil
 
 	var participants Tree
@@ -396,7 +412,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 //https://cs161.org/assets/projects/2/docs/client_api/appendfile.html
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
-	file_symm, file_id, file_owner_hash, _ := RetrieveAccessToken(userdata, filename)
+	file_symm, file_id, file_owner_hash, _, _ := RetrieveAccessToken(userdata, filename)
 	if file_symm == nil {
 		return errors.New(strings.ToTitle("File not found."))
 	}
@@ -444,7 +460,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/loadfile.html
 func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
-	file_symm, file_id, file_owner_hash, err := RetrieveAccessToken(userdata, filename)
+	file_symm, file_id, file_owner_hash, _, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return nil, err
 	}
@@ -475,7 +491,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 // https://cs161.org/assets/projects/2/docs/client_api/sharefile.html
 func (userdata *User) ShareFile(filename string, recipient string) (
 	accessToken uuid.UUID, err error) {
-	file_symm, file_id, file_owner_hash, err := RetrieveAccessToken(userdata, filename)
+	file_symm, file_id, file_owner_hash, _, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -510,11 +526,6 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 	encrypted_AT_struct.Enc_keys = encrypted_AT
 	encrypted_AT_struct.Signed_keys = signed_enc_AT
 	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
-
-	secret_key := userdata.Secret_key
-
-	decrypted_keys, _ := userlib.PKEDec(secret_key, encrypted_AT_struct.Enc_keys)
-	_ = append(decrypted_keys, []byte("hello")...)
 
 	userlib.DatastoreSet(accessToken, encrypted_AT_marshaled)
 
@@ -551,10 +562,12 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	//pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
 	userdata.Files[filename] = accessToken
 
-	file_symm, file_id, file_owner_hash, err := RetrieveAccessToken(userdata, filename)
+	file_symm, file_id, file_owner_hash, owner, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return err
 	}
+
+	owner_pk, _ := userlib.KeystoreGet(string(owner) + "_enckey")
 
 	filedata, err := RetrieveFile(file_owner_hash, file_symm, file_id)
 	if err != nil {
@@ -562,10 +575,12 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	}
 
 	participants := filedata.Participants
+	invite_AT, _ := json.Marshal(accessToken)
+	invite_AT_enc, _ := userlib.PKEEnc(owner_pk, invite_AT)
 
 	var usernode Node
 	usernode.Username = userdata.Username
-	usernode.User_invite_loc = accessToken
+	usernode.User_invite_loc = invite_AT_enc
 	usernode.Children = nil
 
 	// set this user to be child of sender
@@ -620,7 +635,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 // RevokeFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/revokefile.html
 func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
-	file_symm, file_id, file_owner_hash, err := RetrieveAccessToken(userdata, filename)
+	file_symm, file_id, file_owner_hash, _, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return err
 	}
@@ -636,9 +651,11 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	if targetNode == nil {
 		return errors.New(strings.ToTitle("Target does not currently have access to this file."))
 	}
+	root_sk := userdata.Secret_key
+
 	// for the for subtree of target user, change accessTokens to nil
 	garbage := userlib.RandomBytes(16 + 16 + 64)
-	updateAccessTokens(targetNode, garbage)
+	updateAccessTokens(targetNode, garbage, root_sk)
 
 	// remove subtree for this node in participants (probably create this helper)
 	removeSubtree(&participants, targetNode.Username)
@@ -647,20 +664,34 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	file_symm_new := userlib.RandomBytes(16)
 	AT := append(file_symm_new, file_id...)
 	AT = append(AT, file_owner_hash...)
-	updateAccessTokens(participants.Root, AT)
+	updateAccessTokens(participants.Root, AT, root_sk)
 
 	return
 }
 
 // iterates through node and all it's children and updates their accessTokens with given udpate_val
 // encrypts the update_val according to who the node belongs to
-func updateAccessTokens(node *Node, update_val []byte) (err error) {
+func updateAccessTokens(node *Node, update_val []byte, owner_sk userlib.PKEDecKey) (err error) {
 	if node == nil {
 		return nil
 	}
-	userlib.DatastoreSet(node.User_invite_loc, update_val)
+	node_pk, _ := userlib.KeystoreGet(node.Username + "_enckey")
+
+	encrypted_AT, _ := userlib.PKEEnc(node_pk, update_val)
+	signed_enc_AT := userlib.RandomBytes(256)
+
+	var encrypted_AT_struct AccessToken
+	encrypted_AT_struct.Enc_keys = encrypted_AT
+	encrypted_AT_struct.Signed_keys = signed_enc_AT
+	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
+
+	AT, _ := userlib.PKEDec(owner_sk, node.User_invite_loc)
+	var AT_uuid uuid.UUID
+	json.Unmarshal(AT, &AT_uuid)
+	userlib.DatastoreSet(AT_uuid, encrypted_AT_marshaled)
+
 	for _, child := range node.Children {
-		updateAccessTokens(child, update_val)
+		updateAccessTokens(child, update_val, owner_sk)
 	}
 	return nil
 }

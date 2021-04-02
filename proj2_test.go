@@ -239,18 +239,6 @@ func TestShare(t *testing.T) {
 		return
 	}
 
-	// accessToken, err = u.ShareFile("file1", "alice")
-	// if err != nil {
-	// 	t.Error("Failed to share the a file", err)
-	// 	return
-	// }
-
-	// err = u.ReceiveFile("file2", "alice", accessToken)
-	// if err != nil {
-	// 	t.Error("Failed to receive the share message", err)
-	// 	return
-	// }
-
 	accessToken, err = u.ShareFile("file1", "bob")
 	if err != nil {
 		t.Error("Failed to share the a file", err)
@@ -274,4 +262,88 @@ func TestShare(t *testing.T) {
 	}
 
 	// share a file, go to that UUID and print out
+}
+
+func TestRevoke(t *testing.T) {
+	clear()
+
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var v2 []byte
+	var accessToken uuid.UUID
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice", err)
+		return
+	}
+
+	accessToken, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	v2, err = u2.LoadFile("file2")
+	if err != nil {
+		t.Error("Failed to download the file after sharing", err)
+		return
+	}
+	
+	if !reflect.DeepEqual(v, v2) {
+		t.Error("Shared file is not the same", v, v2)
+		return
+	}
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after share", err)
+		return
+	}
+
+	err = u.RevokeFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to revoke access from bob", err)
+		return
+	}
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after revoke", err)
+		return
+	}
+
+	v2, err = u2.LoadFile("file2")
+	if err == nil {
+		t.Error("Bob still has access after revocation", err)
+		return
+	}
+
+	//alice shares with bob & charlie, revoke from charlie, bob should still be able to load
+
+	//alice shares with bob, bob shares with charlie, revoke from bob - neither should be able to load
+
+
+
+
+
+
 }
