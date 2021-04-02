@@ -201,7 +201,7 @@ func TestAppend(t *testing.T) {
 		t.Error("Failed to append", err1)
 		return
 	}
-	
+
 	expected := []byte("This is a test appended data")
 	loaded, err2 := u.LoadFile("file1")
 	if err2 != nil {
