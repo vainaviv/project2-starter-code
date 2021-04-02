@@ -307,7 +307,7 @@ func TestRevoke(t *testing.T) {
 		t.Error("Failed to download the file after sharing", err)
 		return
 	}
-	
+
 	if !reflect.DeepEqual(v, v2) {
 		t.Error("Shared file is not the same", v, v2)
 		return
@@ -341,9 +341,47 @@ func TestRevoke(t *testing.T) {
 
 	//alice shares with bob, bob shares with charlie, revoke from bob - neither should be able to load
 
+}
+
+func TestRemoveSubtree(t *testing.T) {
+	var participants Tree
+	var root Node
+	root.Username = "alice"
+	root.User_invite_loc = nil
+
+	var child1 Node
+	child1.Username = "bob"
+	child1.User_invite_loc = nil
+
+	var child2 Node
+	child2.Username = "charlie"
+	child2.User_invite_loc = nil
+	child2.Children = nil
+
+	child1.Children = []*Node{&child2}
+
+	root.Children = []*Node{&child1}
+
+	participants.Root = &root
 
 
+	ok := removeSubtree(&participants, "bob")
+	if !ok {
+		t.Error("Subtree not removed")
+		return
+	}
 
+	var participants_check Tree
+	var root_check Node
+	root_check.Username = "alice"
+	root_check.User_invite_loc = nil
+	root_check.Children = nil
 
+	participants_check.Root = &root_check
+
+	if !reflect.DeepEqual(participants_check, participants) {
+		t.Error("Tree is not the same", participants_check, participants)
+		return
+	}
 
 }

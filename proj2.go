@@ -123,7 +123,7 @@ func Unpad(ciphertext []byte) (unpadded_msg []byte) {
 	return unpadded_msg
 }
 
-func TreeSearch(participants Tree, username string) (node *Node) {
+func TreeSearch(participants* Tree, username string) (node *Node) {
 	queue := make([]*Node, 0)
 	queue = append(queue, participants.Root)
 
@@ -422,7 +422,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	}
 
 	participants := filedata.Participants
-	if TreeSearch(participants, userdata.Username) == nil {
+	if TreeSearch(&participants, userdata.Username) == nil {
 		return errors.New(strings.ToTitle("User does not have access to this file."))
 	}
 
@@ -472,7 +472,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 
 	participants := filedata.Participants
 
-	if TreeSearch(participants, userdata.Username) == nil {
+	if TreeSearch(&participants, userdata.Username) == nil {
 		return nil, errors.New(strings.ToTitle("User does not have access to this file."))
 	}
 
@@ -501,7 +501,7 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 	}
 	participants := filedata.Participants
 
-	if TreeSearch(participants, userdata.Username) == nil {
+	if TreeSearch(&participants, userdata.Username) == nil {
 		return uuid.Nil, errors.New(strings.ToTitle("This user does not have access to the file."))
 	}
 	recipient_pk, ok := userlib.KeystoreGet(recipient + "_enckey")
@@ -584,7 +584,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	usernode.Children = nil
 
 	// set this user to be child of sender
-	sender_node := TreeSearch(participants, sender)
+	sender_node := TreeSearch(&participants, sender)
 	if sender_node == nil {
 		return errors.New(strings.ToTitle("Sender does not have access to the file."))
 	}
@@ -635,7 +635,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 // RevokeFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/revokefile.html
 func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
-	file_symm, file_id, file_owner_hash, _, err := RetrieveAccessToken(userdata, filename)
+	file_symm, file_id, file_owner_hash, owner, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return err
 	}
@@ -647,7 +647,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	if (participants.Root).Username != userdata.Username {
 		return errors.New(strings.ToTitle("User does not have revoke access."))
 	}
-	targetNode := TreeSearch(participants, targetUsername)
+	targetNode := TreeSearch(&participants, targetUsername)
 	if targetNode == nil {
 		return errors.New(strings.ToTitle("Target does not currently have access to this file."))
 	}
@@ -663,8 +663,26 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	// go through pariticipants and replace file_symm
 	file_symm_new := userlib.RandomBytes(16)
 	AT := append(file_symm_new, file_id...)
-	AT = append(AT, file_owner_hash...)
+	AT = append(AT, owner...)
 	updateAccessTokens(participants.Root, AT, root_sk)
+
+	//Storing encrypted file struct in datastore
+	key_hash := userlib.Hash(append(file_id, file_owner_hash[:]...))
+	storageKey, _ := uuid.FromBytes(key_hash[:16])
+	jsonData, _ := json.Marshal(filedata)
+	jsonData_enc := Padding(jsonData)
+	iv := userlib.RandomBytes(16)
+	jsonData_enc = userlib.SymEnc(file_symm, iv, jsonData_enc)
+	userlib.DatastoreSet(storageKey, jsonData_enc)
+
+	//Storing encrypted file struct HMAC in datastore
+	hmac := []byte("HMAC")
+	key_HMAC := append(hmac, file_owner_hash...)
+	key_HMAC = append(file_id, key_HMAC...)
+	key_hash_HMAC := userlib.Hash(key_HMAC)
+	storageKey_HMAC, _ := uuid.FromBytes(key_hash_HMAC[:16])
+	jsonData_enc_HMAC, _ := userlib.HMACEval(file_symm, jsonData_enc)
+	userlib.DatastoreSet(storageKey_HMAC, jsonData_enc_HMAC)
 
 	return
 }
@@ -705,7 +723,12 @@ func removeSubtree(participants *Tree, targetUser string) (found bool) {
 		if len(next.Children) > 0 {
 			for idx, child := range next.Children {
 				if child.Username == targetUser {
-					next.Children = append(next.Children[:idx], next.Children[idx+1:]...)
+					if len(next.Children) == 1 {
+						next.Children = nil
+					} else {
+						next.Children = append(next.Children[:idx], next.Children[idx+1:]...)
+
+					}
 					return true
 				}
 				queue = append(queue, child)
