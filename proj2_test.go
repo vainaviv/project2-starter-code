@@ -146,21 +146,31 @@ func TestStorage(t *testing.T) {
 		return
 	}
 
-	v = []byte("This is a test")
-	err5 := u.StoreFile("file1", v)
-	if err5 == nil {
-		t.Error("Did not detect duplicate filename.", err5)
+	v3 := []byte("This better overwrite")
+	err5 := u.StoreFile("file1", v3)
+	if err5 != nil {
+		t.Error("Failed to overwrite.", err5)
+		return
+	}
+
+	v4, err5 := u.LoadFile("file1")
+	if err5 != nil {
+		t.Error("Failed to upload and download", err5)
+		return
+	}
+	if !reflect.DeepEqual(v3, v4) {
+		t.Error("Downloaded file is not the same", v3, v4)
 		return
 	}
 }
 
 func TestPad(t *testing.T) {
 	clear()
-	msg := []byte("test padding")
+	msg := []byte("multiplejfbdjgkd") // multiple of 16
 	padded := Padding(msg)
 	unpadded := Unpad(padded)
 	if string(unpadded) != string(msg) {
-		t.Error("padding didn't work", unpadded)
+		t.Error("padding didn't work", padded, unpadded)
 	}
 }
 
@@ -260,11 +270,9 @@ func TestShare(t *testing.T) {
 		t.Error("Shared file is not the same", v, v2)
 		return
 	}
-
-	// share a file, go to that UUID and print out
 }
 
-func TestRevoke(t *testing.T) {
+func TestRevoke_1(t *testing.T) {
 	clear()
 
 	u, err := InitUser("alice", "fubar")
@@ -336,12 +344,309 @@ func TestRevoke(t *testing.T) {
 		t.Error("Bob still has access after revocation", err)
 		return
 	}
+}
 
+func TestRevoke_2(t *testing.T) {
 	//alice shares with bob & charlie, revoke from charlie, bob should still be able to load
+	clear()
 
+	// initalize users
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err3 := InitUser("charlie", "foobar")
+	if err3 != nil {
+		t.Error("Failed to initialize bob", err3)
+		return
+	}
+	/////////////////
+
+	//alice create file
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var v2 []byte
+	var accessToken uuid.UUID
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice", err)
+		return
+	}
+	//////////////////
+
+	// alice shares with bob
+	accessToken, err = u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	v2, err = u2.LoadFile("file2")
+	if err != nil {
+		t.Error("Failed to download the file after sharing", err)
+		return
+	}
+
+	if !reflect.DeepEqual(v, v2) {
+		t.Error("Shared file is not the same", v, v2)
+		return
+	}
+	///////////////////
+
+	// alice shares with charlie
+	accessToken, err = u.ShareFile("file1", "charlie")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u3.ReceiveFile("file3", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	v3, err := u3.LoadFile("file3")
+	if err != nil {
+		t.Error("Failed to download the file after sharing", err)
+		return
+	}
+
+	if !reflect.DeepEqual(v, v3) {
+		t.Error("Shared file is not the same", v, v3)
+		return
+	}
+	//////////////////
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after share", err)
+		return
+	}
+
+	// Alice revokes from Bob
+	err = u.RevokeFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to revoke access from bob", err)
+		return
+	}
+	////////////
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after revoke", err)
+		return
+	}
+	v3, err = u3.LoadFile("file3")
+	if err != nil {
+		t.Error("Failed to download the file from charlie after alice revoked bob", err)
+		return
+	}
+
+	v2, err = u2.LoadFile("file2")
+	if err == nil {
+		t.Error("Bob still has access after revocation", err)
+		return
+	}
+}
+func TestRevoke_3(t *testing.T) {
 	//alice shares with bob, bob shares with charlie, revoke from bob - neither should be able to load
+	clear()
+
+	// initalize users
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err3 := InitUser("charlie", "foobar")
+	if err3 != nil {
+		t.Error("Failed to initialize bob", err3)
+		return
+	}
+	/////////////////
+
+	//alice create file
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	//////////////////
+
+	// alice shares with bob
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+	///////////////////
+
+	// bob shares with charlie
+	accessToken, err = u2.ShareFile("file2", "charlie")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u3.ReceiveFile("file3", "bob", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	v3, err := u3.LoadFile("file3")
+	if err != nil {
+		t.Error("Failed to download the file after sharing", err)
+		return
+	}
+
+	if !reflect.DeepEqual(v, v3) {
+		t.Error("Shared file is not the same", v, v3)
+		return
+	}
+	//////////////////
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after share", err)
+		return
+	}
+
+	// Alice revokes from Bob
+	err = u.RevokeFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to revoke access from bob", err)
+		return
+	}
+	////////////
+
+	v, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after revoke", err)
+		return
+	}
+	v3, err = u3.LoadFile("file3")
+	if err == nil {
+		t.Error("Charlie still has access after revocation", err)
+		return
+	}
+
+	_, err = u2.LoadFile("file2")
+	if err == nil {
+		t.Error("Bob still has access after revocation", err)
+		return
+	}
+}
+
+func TestRevoke_4(t *testing.T) {
+	// test error check: share when user does not have acces to file
+	clear()
+
+	// initalize users
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err3 := InitUser("charlie", "foobar")
+	if err3 != nil {
+		t.Error("Failed to initialize bob", err3)
+		return
+	}
+	/////////////////
+
+	//alice create file
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	//////////////////
+
+	// bob shares with charlie
+	_, err = u2.ShareFile("file1", "charlie")
+	if err == nil {
+		t.Error("Failed to recognize that Bob does not have access to file and cannot share the file", err)
+		return
+	}
+
+	// Alice revokes from Bob w/o sharing with Bob
+	err = u.RevokeFile("file1", "bob")
+	if err == nil {
+		t.Error("Failed to recognize alice cannot revoke from bob", err)
+		return
+	}
+	////////////
+
+	// test error check: alice share Bob, bob share charlie, but he cannot revoke charlie
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the file", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u2.ShareFile("file2", "charlie")
+	if err != nil {
+		t.Error("Failed to allow participant (not owner) to share the file", err)
+		return
+	}
+
+	err = u3.ReceiveFile("file3", "bob", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	err = u2.RevokeFile("file1", "charlie")
+	if err == nil {
+		t.Error("Failed to recognize bob (who is not the owner) cannot revoke from charlie", err)
+		return
+	}
 
 }
+
+// THINGS WE NEED TO DO
+// 2. Implement append
+// 3. test non-owners trying to append
+// 5. make a test  to share, revoke, then share again different users sharing file again
+// 6. how to test revoking access of an offline user
+// 8. how to test multiple user session with same user?
+// 9. check each public key is used for a single purpose
+// 10. cannot:
+// reusing the same key for multiple purposes (e.g. encryption, authentication, key- derivation, etc); and
+// authenticate-then-encrypt; and
+// decrypt-then-verify.
 
 func TestRemoveSubtree(t *testing.T) {
 	var participants Tree
@@ -363,7 +668,6 @@ func TestRemoveSubtree(t *testing.T) {
 	root.Children = []*Node{&child1}
 
 	participants.Root = &root
-
 
 	ok := removeSubtree(&participants, "bob")
 	if !ok {

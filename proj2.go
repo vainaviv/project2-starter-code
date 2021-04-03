@@ -82,24 +82,31 @@ type Node struct {
 	Children        []*Node
 }
 
+type LL_node struct {
+	Data []byte
+	Next userlib.UUID
+}
+
 type Tree struct {
 	Root *Node
 }
 
 // User is the structure definition for a user record.
 type User struct {
-	password   string
-	Username   string
-	Secret_key userlib.PKEDecKey
-	//HMAC_sk []byte
-	Signing_sk userlib.DSSignKey
-	Files      map[string]userlib.UUID //Hashmap of files: filename → accesstoken|HMAC(file_location)
+	password    string
+	Username    string
+	Secret_key  userlib.PKEDecKey
+	Signing_sk  userlib.DSSignKey
+	Files       map[string]userlib.UUID //Hashmap of files: filename → accesstoken|HMAC(file_location)
+	AT_HMAC_key []byte
 }
 
 type File struct {
-	Data         []byte
-	End_pointer  int  //encrypted int len of file
-	Participants Tree //marshaled version of Tree
+	//Data         []byte
+	// End_pointer  int  //encrypted int len of file
+	Head         userlib.UUID
+	Tail         userlib.UUID
+	Participants Tree
 	File_ID      []byte
 }
 
@@ -123,7 +130,7 @@ func Unpad(ciphertext []byte) (unpadded_msg []byte) {
 	return unpadded_msg
 }
 
-func TreeSearch(participants* Tree, username string) (node *Node) {
+func TreeSearch(participants *Tree, username string) (node *Node) {
 	queue := make([]*Node, 0)
 	queue = append(queue, participants.Root)
 
@@ -193,11 +200,49 @@ func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, fil
 	file_symm, file_id, owner = decrypted_keys[:16], decrypted_keys[16:32], decrypted_keys[32:]
 	file_owner := userlib.Hash(owner)
 	file_owner_hash = file_owner[:]
-	//owner_pk, _ = userlib.KeystoreGet(string(owner))
-	// file_symm, file_id, file_owner_hash = decrypted_keys[:16], decrypted_keys[16:32], decrypted_keys[32:96]
-	// owner_pk = decrypted_keys[96:]
 
 	return file_symm, file_id, file_owner_hash, owner, nil
+}
+
+func DatastoreFile(file_id []byte, owner_hash []byte, file_symm []byte, filedata *File) {
+	//Storing encrypted file struct in datastore
+	key_hash := userlib.Hash(append(file_id, owner_hash[:]...))
+	storageKey, _ := uuid.FromBytes(key_hash[:16])
+	jsonData, _ := json.Marshal(filedata)
+	jsonData_enc := Padding(jsonData)
+	iv := userlib.RandomBytes(16)
+	jsonData_enc = userlib.SymEnc(file_symm, iv, jsonData_enc)
+	userlib.DatastoreSet(storageKey, jsonData_enc)
+
+	//Storing encrypted file struct HMAC in datastore
+	hmac := []byte("HMAC")
+	key_HMAC := append(hmac, owner_hash[:]...)
+	key_HMAC = append(file_id, key_HMAC...)
+	key_hash_HMAC := userlib.Hash(key_HMAC)
+	storageKey_HMAC, _ := uuid.FromBytes(key_hash_HMAC[:16])
+	jsonData_enc_HMAC, _ := userlib.HMACEval(file_symm, jsonData_enc) //maybe don't use file_symm
+	userlib.DatastoreSet(storageKey_HMAC, jsonData_enc_HMAC)
+}
+
+func DatastoreUser(userdata *User, pk userlib.PKEEncKey) {
+	userbytes, _ := json.Marshal(userdata)
+	pwd_bytes := []byte(userdata.password)
+	pub_k, _ := json.Marshal(pk)
+
+	//Storing encrypted user struct in datastore
+	IV_enc := userlib.RandomBytes(16)
+	salt, _ := userlib.HMACEval(pub_k[0:16], []byte(userdata.Username))
+	userbytes = Padding(userbytes)
+	userdata_enc := userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_enc, userbytes)
+	hash := userlib.Hash([]byte(userdata.Username))
+	slicehash := hash[:]
+	userlib.DatastoreSet(bytesToUUID(slicehash), userdata_enc)
+
+	//Storing HMAC of encrypted user struct in datastore
+	userdata_HMAC, _ := userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata_enc)
+	hash_HMAC := userlib.Hash([]byte(userdata.Username + "HMAC"))
+	slicehash_HMAC := hash_HMAC[:]
+	userlib.DatastoreSet(bytesToUUID(slicehash_HMAC), userdata_HMAC)
 }
 
 // InitUser will be called a single time to initialize a new user.
@@ -222,12 +267,13 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	public_key, secret_key, _ := userlib.PKEKeyGen()
 
-	//
 	pk, _ := json.Marshal(public_key)
-	// //TODO: Check keylen later if necessary - secret keys using keylen = 32, hmacs using keylen = 16
+	//TODO: Check keylen later if necessary - secret keys using keylen = 32, hmacs using keylen = 16
 	userlib.KeystoreSet(user_enckey, public_key)
 
 	userdata.Secret_key = secret_key
+
+	userdata.AT_HMAC_key = userlib.RandomBytes(16)
 
 	signing_sk, signing_verk, _ := userlib.DSKeyGen()
 
@@ -272,7 +318,6 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	_, ok_sign := userlib.KeystoreGet(user_verkey)
 
 	if ok_enc && ok_sign {
-		//do we need to check both enckey and verkey? what are security implications if one exists and other doesn’t?
 		hash := userlib.Hash([]byte(username))
 		slicehash := hash[:]
 		user, ok := userlib.DatastoreGet(bytesToUUID(slicehash))
@@ -312,25 +357,53 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	var filedata File
 
+	data = Padding(data)
+
+	// case where file exists and someone else may be owner and we are overwriting
 	_, ok := userdata.Files[filename]
 	if ok {
-		return errors.New(strings.ToTitle("This user already has a file with this name."))
+		file_symm, file_id, file_owner_hash, _, _ := RetrieveAccessToken(userdata, filename)
+		filedata, _ := RetrieveFile(file_owner_hash, file_symm, file_id)
+
+		var data_node LL_node //needs to go onto datastore
+		iv := userlib.RandomBytes(16)
+		data_node.Data = userlib.SymEnc(file_symm, iv, data)
+		data_node.Next = uuid.Nil
+
+		random := userlib.RandomBytes(16)
+		data_loc := bytesToUUID(random)
+
+		data_node_marshal, _ := json.Marshal(data_node)
+		userlib.DatastoreSet(data_loc, data_node_marshal)
+
+		filedata.Head = data_loc
+		filedata.Tail = data_node.Next
+
+		DatastoreFile(file_id, file_owner_hash, file_symm, filedata)
+		return
 	}
 
 	file_symm := userlib.RandomBytes(16)
-	filedata.Data = data
-	filedata.End_pointer = len(filedata.Data)
+
+	var data_node LL_node //needs to go onto datastore
+	iv := userlib.RandomBytes(16)
+	data_node.Data = userlib.SymEnc(file_symm, iv, data)
+	data_node.Next = uuid.Nil
+
+	random := userlib.RandomBytes(16)
+	data_loc := bytesToUUID(random)
+
+	data_node_marshal, _ := json.Marshal(data_node)
+	userlib.DatastoreSet(data_loc, data_node_marshal)
+
+	filedata.Head = data_loc
+	filedata.Tail = data_node.Next
 
 	pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
 	file_id := userlib.RandomBytes(16)
 	filedata.File_ID = file_id
 
 	owner_hash := userlib.Hash([]byte(userdata.Username))
-
-	// AT := append(file_symm, file_id...)
-	// AT = append(AT, owner_hash[:]...)
-	// owner_pk, _ := json.Marshal(pk)
-	// AT = append(AT, owner_pk...)
 
 	AT := append(file_symm, file_id...)
 	AT = append(AT, []byte(userdata.Username)...)
@@ -368,43 +441,8 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	participants.Root = usernodeptr
 	filedata.Participants = participants
 
-	//Storing encrypted file struct in datastore
-	key_hash = userlib.Hash(append(file_id, owner_hash[:]...))
-	storageKey, _ := uuid.FromBytes(key_hash[:16])
-	jsonData, _ := json.Marshal(filedata)
-	jsonData_enc := Padding(jsonData)
-	iv := userlib.RandomBytes(16)
-	jsonData_enc = userlib.SymEnc(file_symm, iv, jsonData_enc)
-	userlib.DatastoreSet(storageKey, jsonData_enc)
-
-	//Storing encrypted file struct HMAC in datastore
-	hmac := []byte("HMAC")
-	key_HMAC := append(hmac, owner_hash[:]...)
-	key_HMAC = append(file_id, key_HMAC...)
-	key_hash_HMAC := userlib.Hash(key_HMAC)
-	storageKey_HMAC, _ := uuid.FromBytes(key_hash_HMAC[:16])
-	jsonData_enc_HMAC, _ := userlib.HMACEval(file_symm, jsonData_enc)
-	userlib.DatastoreSet(storageKey_HMAC, jsonData_enc_HMAC)
-
-	userbytes, _ := json.Marshal(userdata)
-	pwd_bytes := []byte(userdata.password)
-	pub_k, _ := json.Marshal(pk)
-
-	//Storing encrypted user struct in datastore
-	IV_enc := userlib.RandomBytes(16)
-	salt, _ := userlib.HMACEval(pub_k[0:16], []byte(userdata.Username))
-	userbytes = Padding(userbytes)
-	userdata_enc := userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_enc, userbytes)
-	hash := userlib.Hash([]byte(userdata.Username))
-	slicehash := hash[:]
-	userlib.DatastoreSet(bytesToUUID(slicehash), userdata_enc)
-
-	//Storing HMAC of encrypted user struct in datastore
-	userdata_HMAC, _ := userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata_enc)
-	hash_HMAC := userlib.Hash([]byte(userdata.Username + "HMAC"))
-	slicehash_HMAC := hash_HMAC[:]
-	userlib.DatastoreSet(bytesToUUID(slicehash_HMAC), userdata_HMAC)
-
+	DatastoreFile(file_id, owner_hash[:], file_symm, &filedata)
+	DatastoreUser(userdata, pk)
 	return
 }
 
@@ -426,32 +464,32 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 		return errors.New(strings.ToTitle("User does not have access to this file."))
 	}
 
-	end_ptr_num := filedata.End_pointer
+	// end_ptr_num := filedata.End_pointer
 
-	var dataBytes []byte
-	if end_ptr_num <= 32 {
-		dataBytes = filedata.Data
-		dataBytes = append(dataBytes, data...)
-		filedata.Data = dataBytes
-	} else {
-		encrypted_end_data := filedata.Data[end_ptr_num-32:]
-		iv := encrypted_end_data[:16]
-		tail := encrypted_end_data[16:]
-		tail = userlib.SymDec(file_symm, tail)
-		tail = Unpad(tail)
-		tail = append(tail, data...)
-		tail = Padding(tail)
-		filedata.Data = append(filedata.Data[:end_ptr_num-16], userlib.SymEnc(file_symm, iv, tail)...)
-	}
+	// var dataBytes []byte
+	// if end_ptr_num <= 32 {
+	// 	dataBytes = filedata.Data
+	// 	dataBytes = append(dataBytes, data...)
+	// 	filedata.Data = dataBytes
+	// } else {
+	// 	encrypted_end_data := filedata.Data[end_ptr_num-32:]
+	// 	iv := encrypted_end_data[:16]
+	// 	tail := encrypted_end_data[16:]
+	// 	tail = userlib.SymDec(file_symm, tail)
+	// 	tail = Unpad(tail)
+	// 	tail = append(tail, data...)
+	// 	tail = Padding(tail)
+	// 	filedata.Data = append(filedata.Data[:end_ptr_num-16], userlib.SymEnc(file_symm, iv, tail)...)
+	// }
 
-	filedata.End_pointer = len(filedata.Data) //userlib.SymEnc(file_symm, iv, ep)
-	//filedata.Ep_HMAC, _ = userlib.HMACEval(file_symm, filedata.End_pointer)
+	// filedata.End_pointer = len(filedata.Data) //userlib.SymEnc(file_symm, iv, ep)
+	// //filedata.Ep_HMAC, _ = userlib.HMACEval(file_symm, filedata.End_pointer)
 
-	key_hash := userlib.Hash(append(file_id, file_owner_hash[:]...))
-	storageKey, _ := uuid.FromBytes(key_hash[:16])
+	// key_hash := userlib.Hash(append(file_id, file_owner_hash[:]...))
+	// storageKey, _ := uuid.FromBytes(key_hash[:16])
 
-	jsonData, _ := json.Marshal(filedata)
-	userlib.DatastoreSet(storageKey, jsonData)
+	// jsonData, _ := json.Marshal(filedata)
+	// userlib.DatastoreSet(storageKey, jsonData)
 
 	return nil
 }
@@ -482,7 +520,20 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 		return nil, errors.New(strings.ToTitle("Did not retrieve the correct file."))
 	}
 
-	dataBytes = filedata.Data
+	head, _ := userlib.DatastoreGet(filedata.Head)
+	var linked_list LL_node
+	json.Unmarshal(head, &linked_list)
+	dataBytes = []byte{}
+	for linked_list.Next != uuid.Nil {
+		data := userlib.SymDec(file_symm, linked_list.Data)
+		data = Unpad(data)
+		dataBytes = append(dataBytes, data...)
+		next, _ := userlib.DatastoreGet(linked_list.Next)
+		json.Unmarshal(next, &linked_list)
+	}
+	data := userlib.SymDec(file_symm, linked_list.Data)
+	data = Unpad(data)
+	dataBytes = append(dataBytes, data...)
 
 	return dataBytes, nil
 }
@@ -554,12 +605,10 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	_ = append(decrypted_keys, []byte("hello")...)
 
 	sender_verkey, _ := userlib.KeystoreGet(sender + "_verkey")
-	err := userlib.DSVerify(sender_verkey, AT.Enc_keys, AT.Signed_keys) //erroring here
+	err := userlib.DSVerify(sender_verkey, AT.Enc_keys, AT.Signed_keys)
 	if err != nil {
 		return err
 	}
-
-	//pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
 	userdata.Files[filename] = accessToken
 
 	file_symm, file_id, file_owner_hash, owner, err := RetrieveAccessToken(userdata, filename)
@@ -590,45 +639,10 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	}
 	sender_node.Children = append(sender_node.Children, &usernode)
 
-	//Storing encrypted file struct in datastore
-	key_hash := userlib.Hash(append(file_id, file_owner_hash[:]...))
-	storageKey, _ := uuid.FromBytes(key_hash[:16])
-	jsonData, _ := json.Marshal(filedata)
-	jsonData_enc := Padding(jsonData)
-	iv := userlib.RandomBytes(16)
-	jsonData_enc = userlib.SymEnc(file_symm, iv, jsonData_enc)
-	userlib.DatastoreSet(storageKey, jsonData_enc)
-
-	//Storing encrypted file struct HMAC in datastore
-
-	hmac := []byte("HMAC")
-	key_HMAC := append(hmac, file_owner_hash...)
-	key_HMAC = append(file_id, key_HMAC...)
-	key_hash_HMAC := userlib.Hash(key_HMAC)
-	storageKey_HMAC, _ := uuid.FromBytes(key_hash_HMAC[:16])
-	jsonData_enc_HMAC, _ := userlib.HMACEval(file_symm, jsonData_enc)
-	userlib.DatastoreSet(storageKey_HMAC, jsonData_enc_HMAC)
-
 	pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
-	userbytes, _ := json.Marshal(userdata)
-	pwd_bytes := []byte(userdata.password)
-	pub_k, _ := json.Marshal(pk)
 
-	//Storing encrypted user struct in datastore
-	IV_enc := userlib.RandomBytes(16)
-	salt, _ := userlib.HMACEval(pub_k[0:16], []byte(userdata.Username))
-	userbytes = Padding(userbytes)
-	userdata_enc := userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_enc, userbytes)
-	hash := userlib.Hash([]byte(userdata.Username))
-	slicehash := hash[:]
-	userlib.DatastoreSet(bytesToUUID(slicehash), userdata_enc)
-
-	//Storing HMAC of encrypted user struct in datastore
-	userdata_HMAC, _ := userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata_enc)
-	hash_HMAC := userlib.Hash([]byte(userdata.Username + "HMAC"))
-	slicehash_HMAC := hash_HMAC[:]
-	userlib.DatastoreSet(bytesToUUID(slicehash_HMAC), userdata_HMAC)
-
+	DatastoreFile(file_id, file_owner_hash, file_symm, filedata)
+	DatastoreUser(userdata, pk)
 	return nil
 }
 
@@ -666,24 +680,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	AT = append(AT, owner...)
 	updateAccessTokens(participants.Root, AT, root_sk)
 
-	//Storing encrypted file struct in datastore
-	key_hash := userlib.Hash(append(file_id, file_owner_hash[:]...))
-	storageKey, _ := uuid.FromBytes(key_hash[:16])
-	jsonData, _ := json.Marshal(filedata)
-	jsonData_enc := Padding(jsonData)
-	iv := userlib.RandomBytes(16)
-	jsonData_enc = userlib.SymEnc(file_symm, iv, jsonData_enc)
-	userlib.DatastoreSet(storageKey, jsonData_enc)
-
-	//Storing encrypted file struct HMAC in datastore
-	hmac := []byte("HMAC")
-	key_HMAC := append(hmac, file_owner_hash...)
-	key_HMAC = append(file_id, key_HMAC...)
-	key_hash_HMAC := userlib.Hash(key_HMAC)
-	storageKey_HMAC, _ := uuid.FromBytes(key_hash_HMAC[:16])
-	jsonData_enc_HMAC, _ := userlib.HMACEval(file_symm, jsonData_enc)
-	userlib.DatastoreSet(storageKey_HMAC, jsonData_enc_HMAC)
-
+	DatastoreFile(file_id, file_owner_hash, file_symm_new, filedata)
 	return
 }
 
