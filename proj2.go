@@ -83,8 +83,9 @@ type Node struct {
 }
 
 type LL_node struct {
-	Data []byte
-	Next userlib.UUID
+	Data      []byte
+	HMAC_Data []byte
+	Next      userlib.UUID
 }
 
 type Tree struct {
@@ -365,9 +366,10 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 		file_symm, file_id, file_owner_hash, _, _ := RetrieveAccessToken(userdata, filename)
 		filedata, _ := RetrieveFile(file_owner_hash, file_symm, file_id)
 
-		var data_node LL_node //needs to go onto datastore
+		var data_node LL_node
 		iv := userlib.RandomBytes(16)
 		data_node.Data = userlib.SymEnc(file_symm, iv, data)
+		data_node.HMAC_Data, _ = userlib.HMACEval(file_symm, data_node.Data)
 		data_node.Next = uuid.Nil
 
 		random := userlib.RandomBytes(16)
@@ -388,6 +390,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	var data_node LL_node //needs to go onto datastore
 	iv := userlib.RandomBytes(16)
 	data_node.Data = userlib.SymEnc(file_symm, iv, data)
+	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm, data_node.Data)
 	data_node.Next = uuid.Nil
 
 	random := userlib.RandomBytes(16)
@@ -397,7 +400,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	userlib.DatastoreSet(data_loc, data_node_marshal)
 
 	filedata.Head = data_loc
-	filedata.Tail = data_node.Next
+	filedata.Tail = data_loc
 
 	pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
 	file_id := userlib.RandomBytes(16)
@@ -464,33 +467,32 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 		return errors.New(strings.ToTitle("User does not have access to this file."))
 	}
 
-	// end_ptr_num := filedata.End_pointer
+	// Create new node for new Data and place in Datstore at data_loc
+	var data_node LL_node
+	iv := userlib.RandomBytes(16)
+	data = Padding(data)
+	data_node.Data = userlib.SymEnc(file_symm, iv, data)
+	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm, data_node.Data)
+	data_node.Next = uuid.Nil
 
-	// var dataBytes []byte
-	// if end_ptr_num <= 32 {
-	// 	dataBytes = filedata.Data
-	// 	dataBytes = append(dataBytes, data...)
-	// 	filedata.Data = dataBytes
-	// } else {
-	// 	encrypted_end_data := filedata.Data[end_ptr_num-32:]
-	// 	iv := encrypted_end_data[:16]
-	// 	tail := encrypted_end_data[16:]
-	// 	tail = userlib.SymDec(file_symm, tail)
-	// 	tail = Unpad(tail)
-	// 	tail = append(tail, data...)
-	// 	tail = Padding(tail)
-	// 	filedata.Data = append(filedata.Data[:end_ptr_num-16], userlib.SymEnc(file_symm, iv, tail)...)
-	// }
+	random := userlib.RandomBytes(16)
+	data_loc := bytesToUUID(random)
 
-	// filedata.End_pointer = len(filedata.Data) //userlib.SymEnc(file_symm, iv, ep)
-	// //filedata.Ep_HMAC, _ = userlib.HMACEval(file_symm, filedata.End_pointer)
+	data_node_marshal, _ := json.Marshal(data_node)
+	userlib.DatastoreSet(data_loc, data_node_marshal)
+	///////////////////
 
-	// key_hash := userlib.Hash(append(file_id, file_owner_hash[:]...))
-	// storageKey, _ := uuid.FromBytes(key_hash[:16])
+	//old tail Next should point to new data node
+	tail, _ := userlib.DatastoreGet(filedata.Tail)
+	var tail_ll LL_node
+	json.Unmarshal(tail, &tail_ll)
+	tail_ll.Next = data_loc
+	tail_marshal, _ := json.Marshal(tail_ll)
+	userlib.DatastoreSet(filedata.Tail, tail_marshal)
+	//////////////
 
-	// jsonData, _ := json.Marshal(filedata)
-	// userlib.DatastoreSet(storageKey, jsonData)
-
+	filedata.Tail = data_loc
+	DatastoreFile(file_id, file_owner_hash, file_symm, filedata)
 	return nil
 }
 
@@ -525,6 +527,10 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	json.Unmarshal(head, &linked_list)
 	dataBytes = []byte{}
 	for linked_list.Next != uuid.Nil {
+		calc_HMAC, _ := userlib.HMACEval(file_symm, linked_list.Data)
+		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
+			return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
+		}
 		data := userlib.SymDec(file_symm, linked_list.Data)
 		data = Unpad(data)
 		dataBytes = append(dataBytes, data...)
