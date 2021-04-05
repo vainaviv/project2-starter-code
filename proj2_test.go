@@ -108,6 +108,132 @@ func TestGet(t *testing.T) {
 
 }
 
+func TestMultipleUserSessions(t *testing.T) {
+	_, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	alice1, err := GetUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to get user", err)
+		return
+	}
+
+	alice2, err := GetUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to get user", err)
+		return
+	}
+
+	if !reflect.DeepEqual(alice1, alice2) {
+		t.Error("Alice1 and Alice2 don't point to the same thing", alice1, alice2)
+		return
+	}
+
+	// alice1 creates a file
+	v := []byte("This is a test")
+	err1 := alice1.StoreFile("file1", v)
+	if err1 != nil {
+		t.Error("Alice1 failed to store.", err1)
+		return
+	}
+
+	v2, err2 := alice1.LoadFile("file1")
+	if err2 != nil {
+		t.Error("Alice1 failed to download", err2)
+		return
+	}
+
+	// alice2 can load the file
+	v2, err2 = alice2.LoadFile("file1")
+	if err2 != nil {
+		t.Error("Alice2 failed to download", err2)
+		return
+	}
+	if !reflect.DeepEqual(v, v2) {
+		t.Error("Alice2's downloaded file is not the same", v, v2)
+		return
+	}
+
+	// alice2 appends to the file
+	err = alice2.AppendFile("file1", []byte("Appending to file."))
+	if err != nil {
+		t.Error("Alice2 failed to append", err)
+	}
+
+	// alice1 can load the appended file
+	v1, err1 := alice1.LoadFile("file1")
+	if err1 != nil {
+		t.Error("Alice1 failed to download", err1)
+		return
+	}
+	expected_v := []byte("This is a testAppending to file.")
+	if !reflect.DeepEqual(expected_v, v1) {
+		t.Error("Alice1's downloaded file is not the same", expected_v, v1)
+		return
+	}
+
+	// alice1 shares file to bob
+	bob, _ := InitUser("bob", "password")
+
+	accessToken, err := alice1.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Alice1 failed to share file1 with bob", err)
+		return
+	}
+
+	err = bob.ReceiveFile("file1", "alice", accessToken)
+	if err != nil {
+		t.Error("Bob failed to receive file1 from Alice", err)
+		return
+	}
+
+	// bob appends to file
+	err = bob.AppendFile("file1", []byte("Bob appending here."))
+	if err != nil {
+		t.Error("Bob failed to append to file1", err)
+		return
+	}
+
+	bob_v, err1 := bob.LoadFile("file1")
+	if err1 != nil {
+		t.Error("Bob failed to download", err1)
+		return
+	}
+
+	expected_v = []byte("This is a testAppending to file.Bob appending here.")
+	if !reflect.DeepEqual(expected_v, bob_v) {
+		t.Error("Bob's downloaded file is not the same", expected_v, bob_v)
+		return
+	}
+
+	// alice1 and alice 2 can load the appended file
+
+	alice1_v, err1 := alice1.LoadFile("file1")
+	if err1 != nil {
+		t.Error("Alice1 failed to download", err1)
+		return
+	}
+
+	if !reflect.DeepEqual(expected_v, alice1_v) {
+		t.Error("Alice1's downloaded file is not the same", expected_v, alice1_v)
+		return
+	}
+
+	alice2_v, err1 := alice2.LoadFile("file1")
+	if err1 != nil {
+		t.Error("Alice2 failed to download", err1)
+		return
+	}
+
+	if !reflect.DeepEqual(expected_v, alice2_v) {
+		t.Error("Alice2's downloaded file is not the same", expected_v, alice2_v)
+		return
+	}
+}
+
 func TestStorage(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")
@@ -224,6 +350,134 @@ func TestAppend(t *testing.T) {
 	}
 }
 
+func TestAppend_NonOwners(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	u3, err3 := InitUser("charlie", "foobar")
+	if err3 != nil {
+		t.Error("Failed to initialize bob", err3)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	err = u2.AppendFile("file2", []byte("Appending this data."))
+	if err != nil {
+		t.Error("Failed to allow non-owner to append", err)
+		return
+	}
+
+	v2, err := u2.LoadFile("file2")
+	if err != nil {
+		t.Error("Bob failed to download the file after non-owner appended", err)
+		return
+	}
+
+	expected_v := []byte("This is a testAppending this data.")
+	if !reflect.DeepEqual(expected_v, v2) {
+		t.Error("The file bob loaded after appending is incorrect.", expected_v, v2)
+		return
+	}
+
+	alice_v, err := u.LoadFile("file1")
+	if err != nil {
+		t.Error("Alice failed to download the file after non-owner appended", err)
+		return
+	}
+	if !reflect.DeepEqual(expected_v, alice_v) {
+		t.Error("The file alice loaded after bob (non-owner) appended is incorrect.", expected_v, alice_v)
+		return
+	}
+
+	accessToken, err = u2.ShareFile("file2", "charlie")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u3.ReceiveFile("file3", "bob", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	err = u3.AppendFile("file3", []byte("Appending more data."))
+	if err != nil {
+		t.Error("Failed to allow non-owner (charlie) to append", err)
+		return
+	}
+
+	err = u3.AppendFile("file3", []byte("AND more data."))
+	if err != nil {
+		t.Error("Failed to allow non-owner (charlie) to append", err)
+		return
+	}
+
+	err = u.AppendFile("file1", []byte("AND even more data."))
+	if err != nil {
+		t.Error("Failed to allow owner Alice to append", err)
+		return
+	}
+
+	expected_v = []byte("This is a testAppending this data.Appending more data.AND more data.AND even more data.")
+	v3, err := u3.LoadFile("file3")
+	if err != nil {
+		t.Error("Failed to download the file after sharing", err)
+		return
+	}
+
+	if !reflect.DeepEqual(expected_v, v3) {
+		t.Error("Shared file is not the same", v, v3)
+		return
+	}
+
+	v2, err = u2.LoadFile("file2")
+	if err != nil {
+		t.Error("Bob failed to download the file after charlie appended", err)
+		return
+	}
+
+	if !reflect.DeepEqual(expected_v, v2) {
+		t.Error("Bob's shared file is not the same", v, v2)
+		return
+	}
+
+	v1, err := u.LoadFile("file1")
+	if err != nil {
+		t.Error("Alice failed to download the file after charlie appended", err)
+		return
+	}
+
+	if !reflect.DeepEqual(expected_v, v1) {
+		t.Error("Alice's shared file is not the same", v, v1)
+		return
+	}
+}
+
 func TestShare(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")
@@ -266,6 +520,90 @@ func TestShare(t *testing.T) {
 		t.Error("Failed to download the file after sharing", err)
 		return
 	}
+	if !reflect.DeepEqual(v, v2) {
+		t.Error("Shared file is not the same", v, v2)
+		return
+	}
+}
+
+func TestOverwrite(t *testing.T) {
+	// alice stores
+	alice, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+	bob, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	v := []byte("This is a test")
+	alice.StoreFile("file1", v)
+
+	var accessToken uuid.UUID
+
+	// alice loads
+	v, err = alice.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice", err)
+		return
+	}
+
+	// overwrite
+	v = []byte("This is overwriting")
+	alice.StoreFile("file1", v)
+
+	// alice loads -- check correctly overwritten
+	var v2 []byte
+	v2, err = alice.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after overwrite", err)
+		return
+	}
+
+	if !reflect.DeepEqual(v, v2) {
+		t.Error("overwritten file is not the same", v, v2)
+		return
+	}
+
+	// alice share with Bob
+	accessToken, err = alice.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Alice failed to share file with bob", err)
+		return
+	}
+
+	err = bob.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Bob failed to receive the share message", err)
+		return
+	}
+
+	// bob storess
+	v = []byte("Bob is overwriting")
+	bob.StoreFile("file2", v)
+
+	// alice load -- check correctly overwritten
+	v2, err = alice.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to download the file from alice after bob overwrites", err)
+		return
+	}
+
+	if !reflect.DeepEqual(v, v2) {
+		t.Error("Shared file is not the same", v, v2)
+		return
+	}
+
+	// bob load -- check correctly overwritten
+	v2, err = bob.LoadFile("file2")
+	if err != nil {
+		t.Error("Failed to download the file from bob after he overwrites", err)
+		return
+	}
+
 	if !reflect.DeepEqual(v, v2) {
 		t.Error("Shared file is not the same", v, v2)
 		return
@@ -636,13 +974,14 @@ func TestRevoke_4(t *testing.T) {
 
 }
 
+// 04-04
+// 4. revoke
+
 // THINGS WE NEED TO DO
-// 2. Implement append
-// 3. test non-owners trying to append
+// 3. ASK IN OH: test multiple user sessions with same user
 // 5. make a test  to share, revoke, then share again different users sharing file again
 // 6. how to test revoking access of an offline user
 // 8. how to test multiple user session with same user?
-// 9. check each public key is used for a single purpose
 // 10. cannot:
 // reusing the same key for multiple purposes (e.g. encryption, authentication, key- derivation, etc); and
 // authenticate-then-encrypt; and

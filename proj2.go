@@ -158,7 +158,9 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 	if !ok {
 		return nil, errors.New(strings.ToTitle("File not in Datastore!"))
 	}
-	dataJSON_dec := userlib.SymDec(file_symm, dataJSON)
+	file_symm_struct, _ := userlib.HashKDF(file_symm, []byte("encrypt struct"))
+	file_symm_struct = file_symm_struct[:16]
+	dataJSON_dec := userlib.SymDec(file_symm_struct, dataJSON)
 	dataJSON_dec = Unpad(dataJSON_dec)
 	var filedata File
 	filedataptr = &filedata
@@ -173,7 +175,9 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 	if !ok {
 		return nil, errors.New(strings.ToTitle("File HMAC not in Datastore!"))
 	}
-	filedata_HMAC_datastore, _ := userlib.HMACEval(file_symm, dataJSON)
+	file_symm_struct_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC struct"))
+	file_symm_struct_HMAC = file_symm_struct_HMAC[:16]
+	filedata_HMAC_datastore, _ := userlib.HMACEval(file_symm_struct_HMAC, dataJSON)
 	if !userlib.HMACEqual(filedata_HMAC, filedata_HMAC_datastore) {
 		return nil, errors.New(strings.ToTitle("File HMACs don't match!"))
 	}
@@ -212,7 +216,9 @@ func DatastoreFile(file_id []byte, owner_hash []byte, file_symm []byte, filedata
 	jsonData, _ := json.Marshal(filedata)
 	jsonData_enc := Padding(jsonData)
 	iv := userlib.RandomBytes(16)
-	jsonData_enc = userlib.SymEnc(file_symm, iv, jsonData_enc)
+	file_symm_struct, _ := userlib.HashKDF(file_symm, []byte("encrypt struct"))
+	file_symm_struct = file_symm_struct[:16]
+	jsonData_enc = userlib.SymEnc(file_symm_struct, iv, jsonData_enc)
 	userlib.DatastoreSet(storageKey, jsonData_enc)
 
 	//Storing encrypted file struct HMAC in datastore
@@ -221,7 +227,9 @@ func DatastoreFile(file_id []byte, owner_hash []byte, file_symm []byte, filedata
 	key_HMAC = append(file_id, key_HMAC...)
 	key_hash_HMAC := userlib.Hash(key_HMAC)
 	storageKey_HMAC, _ := uuid.FromBytes(key_hash_HMAC[:16])
-	jsonData_enc_HMAC, _ := userlib.HMACEval(file_symm, jsonData_enc) //maybe don't use file_symm
+	file_symm_struct_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC struct"))
+	file_symm_struct_HMAC = file_symm_struct_HMAC[:16]
+	jsonData_enc_HMAC, _ := userlib.HMACEval(file_symm_struct_HMAC, jsonData_enc) //maybe don't use file_symm
 	userlib.DatastoreSet(storageKey_HMAC, jsonData_enc_HMAC)
 }
 
@@ -356,6 +364,8 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 // StoreFile is documented at:
 // https://cs161.org/assets/projects/2/docs/client_api/storefile.html
 func (userdata *User) StoreFile(filename string, data []byte) (err error) {
+
+	// file_symm: HMAC data, encrypt data, HMAC file struct, encrypt file struct
 	var filedata File
 
 	data = Padding(data)
@@ -368,8 +378,12 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 		var data_node LL_node
 		iv := userlib.RandomBytes(16)
-		data_node.Data = userlib.SymEnc(file_symm, iv, data)
-		data_node.HMAC_Data, _ = userlib.HMACEval(file_symm, data_node.Data)
+		file_symm_data, _ := userlib.HashKDF(file_symm, []byte("encrypt data"))
+		file_symm_data = file_symm_data[:16]
+		data_node.Data = userlib.SymEnc(file_symm_data, iv, data)
+		file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
+		file_symm_data_HMAC = file_symm_data_HMAC[:16]
+		data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, data_node.Data)
 		data_node.Next = uuid.Nil
 
 		random := userlib.RandomBytes(16)
@@ -389,8 +403,12 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	var data_node LL_node //needs to go onto datastore
 	iv := userlib.RandomBytes(16)
-	data_node.Data = userlib.SymEnc(file_symm, iv, data)
-	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm, data_node.Data)
+	file_symm_data, _ := userlib.HashKDF(file_symm, []byte("encrypt data"))
+	file_symm_data = file_symm_data[:16]
+	data_node.Data = userlib.SymEnc(file_symm_data, iv, data)
+	file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
+	file_symm_data_HMAC = file_symm_data_HMAC[:16]
+	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, data_node.Data)
 	data_node.Next = uuid.Nil
 
 	random := userlib.RandomBytes(16)
@@ -453,6 +471,10 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 //https://cs161.org/assets/projects/2/docs/client_api/appendfile.html
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
+	if data == nil || len(data) < 1 {
+		return errors.New(strings.ToTitle("No data to append."))
+	}
+
 	file_symm, file_id, file_owner_hash, _, _ := RetrieveAccessToken(userdata, filename)
 	if file_symm == nil {
 		return errors.New(strings.ToTitle("File not found."))
@@ -471,8 +493,14 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	var data_node LL_node
 	iv := userlib.RandomBytes(16)
 	data = Padding(data)
-	data_node.Data = userlib.SymEnc(file_symm, iv, data)
-	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm, data_node.Data)
+
+	file_symm_data, _ := userlib.HashKDF(file_symm, []byte("encrypt data"))
+	file_symm_data = file_symm_data[:16]
+	file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
+	file_symm_data_HMAC = file_symm_data_HMAC[:16]
+
+	data_node.Data = userlib.SymEnc(file_symm_data, iv, data)
+	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, data_node.Data)
 	data_node.Next = uuid.Nil
 
 	random := userlib.RandomBytes(16)
@@ -526,18 +554,28 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	var linked_list LL_node
 	json.Unmarshal(head, &linked_list)
 	dataBytes = []byte{}
+
+	file_symm_data, _ := userlib.HashKDF(file_symm, []byte("encrypt data"))
+	file_symm_data = file_symm_data[:16]
+	file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
+	file_symm_data_HMAC = file_symm_data_HMAC[:16]
+
 	for linked_list.Next != uuid.Nil {
-		calc_HMAC, _ := userlib.HMACEval(file_symm, linked_list.Data)
+		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
 		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 			return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
 		}
-		data := userlib.SymDec(file_symm, linked_list.Data)
+		data := userlib.SymDec(file_symm_data, linked_list.Data)
 		data = Unpad(data)
 		dataBytes = append(dataBytes, data...)
 		next, _ := userlib.DatastoreGet(linked_list.Next)
 		json.Unmarshal(next, &linked_list)
 	}
-	data := userlib.SymDec(file_symm, linked_list.Data)
+	calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+	if string(calc_HMAC) != string(linked_list.HMAC_Data) {
+		return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
+	}
+	data := userlib.SymDec(file_symm_data, linked_list.Data)
 	data = Unpad(data)
 	dataBytes = append(dataBytes, data...)
 
