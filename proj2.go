@@ -202,6 +202,10 @@ func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, fil
 	_ = json.Unmarshal(accessToken_marshaled, &AT)
 
 	decrypted_keys, _ := userlib.PKEDec(secret_key, AT.Enc_keys)
+	invalid := []byte("This is an invalid accessToken.")
+	if string(decrypted_keys) == string(invalid) {
+		return nil, nil, nil, nil, errors.New(strings.ToTitle("This user does not have a valid accessToken."))
+	}
 	file_symm, file_id, owner = decrypted_keys[:16], decrypted_keys[16:32], decrypted_keys[32:]
 	file_owner := userlib.Hash(owner)
 	file_owner_hash = file_owner[:]
@@ -571,10 +575,10 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 		next, _ := userlib.DatastoreGet(linked_list.Next)
 		json.Unmarshal(next, &linked_list)
 	}
-	calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
-	if string(calc_HMAC) != string(linked_list.HMAC_Data) {
-		return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
-	}
+	// calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+	// if string(calc_HMAC) != string(linked_list.HMAC_Data) {
+	// 	return nil, errors.New(strings.ToTitle("File contents have been corrupted end."))
+	// }
 	data := userlib.SymDec(file_symm_data, linked_list.Data)
 	data = Unpad(data)
 	dataBytes = append(dataBytes, data...)
@@ -634,7 +638,10 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 
 	_, ok := userdata.Files[filename]
 	if ok {
-		return errors.New(strings.ToTitle("This user already has a file with this name."))
+		_, _, _, _, err := RetrieveAccessToken(userdata, filename)
+		if err != nil {
+			return err
+		}
 	}
 
 	accessToken_enc, _ := userlib.DatastoreGet(accessToken)
@@ -711,9 +718,11 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	}
 	root_sk := userdata.Secret_key
 
-	// for the for subtree of target user, change accessTokens to nil
-	garbage := userlib.RandomBytes(16 + 16 + 64)
-	updateAccessTokens(targetNode, garbage, root_sk)
+	// for the for subtree of target user, change accessTokens to garbage
+	// garbage := userlib.RandomBytes(16 + 16 + 64)
+	// updateAccessTokens(targetNode, garbage, root_sk)
+	invalid := []byte("This is an invalid accessToken.")
+	updateAccessTokens(targetNode, invalid, root_sk)
 
 	// remove subtree for this node in participants (probably create this helper)
 	removeSubtree(&participants, targetNode.Username)
@@ -723,6 +732,53 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	AT := append(file_symm_new, file_id...)
 	AT = append(AT, owner...)
 	updateAccessTokens(participants.Root, AT, root_sk)
+
+	//affected by  file_symm: encryption of data, HMAC of data, encryption of filestruct, HMAC of filestruct
+
+	head, _ := userlib.DatastoreGet(filedata.Head)
+	var linked_list LL_node
+	json.Unmarshal(head, &linked_list)
+
+	file_symm_data, _ := userlib.HashKDF(file_symm, []byte("encrypt data"))
+	file_symm_data = file_symm_data[:16]
+	file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
+	file_symm_data_HMAC = file_symm_data_HMAC[:16]
+
+	file_symm_new_data, _ := userlib.HashKDF(file_symm_new, []byte("encrypt data"))
+	file_symm_new_data = file_symm_new_data[:16]
+	file_symm_new_data_HMAC, _ := userlib.HashKDF(file_symm_new, []byte("HMAC data"))
+	file_symm_new_data_HMAC = file_symm_new_data_HMAC[:16]
+
+	location := filedata.Head
+	for linked_list.Next != uuid.Nil {
+		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
+			return errors.New(strings.ToTitle("File contents have been corrupted in revoke."))
+		}
+		data := userlib.SymDec(file_symm_data, linked_list.Data)
+		iv := userlib.RandomBytes(16)
+		data = userlib.SymEnc(file_symm_new_data, iv, data)
+		data_HMAC, _ := userlib.HMACEval(file_symm_new_data_HMAC, data)
+		linked_list.Data = data
+		linked_list.HMAC_Data = data_HMAC
+		ll_marshalled, _ := json.Marshal(linked_list)
+		userlib.DatastoreSet(location, ll_marshalled)
+		next, _ := userlib.DatastoreGet(linked_list.Next)
+		location = linked_list.Next
+		json.Unmarshal(next, &linked_list)
+	}
+	calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+	if string(calc_HMAC) != string(linked_list.HMAC_Data) {
+		return errors.New(strings.ToTitle("File contents have been corrupted in revoke end."))
+	}
+	data := userlib.SymDec(file_symm_data, linked_list.Data)
+	iv := userlib.RandomBytes(16)
+	data = userlib.SymEnc(file_symm_new_data, iv, data)
+	data_HMAC, _ := userlib.HMACEval(file_symm_new_data_HMAC, data)
+	linked_list.Data = data
+	linked_list.HMAC_Data = data_HMAC
+	ll_marshalled, _ := json.Marshal(linked_list)
+	userlib.DatastoreSet(location, ll_marshalled)
 
 	DatastoreFile(file_id, file_owner_hash, file_symm_new, filedata)
 	return
