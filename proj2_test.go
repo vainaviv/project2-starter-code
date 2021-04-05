@@ -1238,6 +1238,7 @@ func TestRevokeAppend(t *testing.T) {
 
 // THINGS WE NEED TO DO
 // 1. ASK IN OH: test multiple user sessions with same user
+// 2. Create AccessToken struct
 // 4. cannot:
 // reusing the same key for multiple purposes (e.g. encryption, authentication, key- derivation, etc); and
 // authenticate-then-encrypt; and

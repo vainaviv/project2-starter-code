@@ -160,7 +160,7 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 	}
 	file_symm_struct, _ := userlib.HashKDF(file_symm, []byte("encrypt struct"))
 	file_symm_struct = file_symm_struct[:16]
-	dataJSON_dec := userlib.SymDec(file_symm_struct, dataJSON)
+	dataJSON_dec := userlib.SymDec(file_symm_struct, dataJSON) // check why this is slice out of range error
 	dataJSON_dec = Unpad(dataJSON_dec)
 	var filedata File
 	filedataptr = &filedata
