@@ -292,7 +292,7 @@ func TestStorage(t *testing.T) {
 	}
 }
 
-func TestPad(t *testing.T) {
+/*func TestPad(t *testing.T) {
 	clear()
 	msg := []byte("multiplejfbdjgkd") // multiple of 16
 	padded := Padding(msg)
@@ -301,7 +301,7 @@ func TestPad(t *testing.T) {
 		t.Error("padding didn't work", padded, unpadded)
 	}
 }
-
+*/
 func TestInvalidFile(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")
@@ -1237,14 +1237,8 @@ func TestRevokeAppend(t *testing.T) {
 }
 
 // THINGS WE NEED TO DO
-// 1. ASK IN OH: test multiple user sessions with same user
-// 2. Create AccessToken struct
-// 4. cannot:
-// reusing the same key for multiple purposes (e.g. encryption, authentication, key- derivation, etc); and
-// authenticate-then-encrypt; and
-// decrypt-then-verify.
 // 11. test all possible combinations of functions
-
+/*
 func TestRemoveSubtree(t *testing.T) {
 	var participants Tree
 	var root Node
@@ -1285,4 +1279,4 @@ func TestRemoveSubtree(t *testing.T) {
 		return
 	}
 
-}
+}*/

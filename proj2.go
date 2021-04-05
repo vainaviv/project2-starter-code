@@ -96,10 +96,11 @@ type Tree struct {
 type User struct {
 	password    string
 	Username    string
+	Tree_sk			userlib.PKEDecKey
 	Secret_key  userlib.PKEDecKey
 	Signing_sk  userlib.DSSignKey
-	Files       map[string]userlib.UUID //Hashmap of files: filename → accesstoken|HMAC(file_location)
-	AT_HMAC_key []byte
+	Files_key 	[]byte
+	//Files       userlib.UUID // pointer to Hashmap of files: filename → accesstoken|HMAC(file_location)
 }
 
 type File struct {
@@ -112,8 +113,14 @@ type File struct {
 }
 
 type AccessToken struct {
-	Enc_keys    []byte
-	Signed_keys []byte
+	Enc_file_symm []byte
+	Enc_file_id []byte
+	Enc_file_owner []byte
+	Signed_file_symm []byte
+	Signed_file_id []byte
+	Signed_file_owner []byte
+	// Enc_keys    []byte
+	// Signed_keys []byte
 }
 
 func Padding(msg []byte) (padded_msg []byte) {
@@ -148,6 +155,52 @@ func TreeSearch(participants *Tree, username string) (node *Node) {
 		}
 	}
 
+	return nil
+}
+
+func RetrieveHashmap(username string, files_key []byte) (files map[string]userlib.UUID, err error) {
+
+	hash := userlib.Hash([]byte(username + "files"))
+	slicehash := hash[:]
+	enc_marshalled_files, _ := userlib.DatastoreGet(bytesToUUID(slicehash))
+
+	hash_HMAC := userlib.Hash([]byte(username + "files HMAC"))
+	slicehash_HMAC := hash_HMAC[:]
+	enc_marshalled_files_HMAC, _ := userlib.DatastoreGet(bytesToUUID(slicehash_HMAC))
+
+
+	HMAC_key, _ := userlib.HashKDF(files_key, []byte("HMAC files"))
+	HMAC_calc, _ := userlib.HMACEval(HMAC_key[:16], enc_marshalled_files)
+	if !userlib.HMACEqual(HMAC_calc, enc_marshalled_files_HMAC) {
+		return nil, errors.New(strings.ToTitle("Files HMAC doesn't match."))
+	}
+
+	dec_key, _ := userlib.HashKDF(files_key, []byte("encryption files"))
+	marshalled_files := userlib.SymDec(dec_key[:16], enc_marshalled_files)
+	marshalled_files = Unpad(marshalled_files)
+	json.Unmarshal(marshalled_files, &files)
+	return files, nil
+}
+
+func SetHashmap(filename string, accessToken userlib.UUID, username string, files_key []byte) error {
+	files, err := RetrieveHashmap(username, files_key)
+	if err != nil {
+		return err
+	}
+	files[filename] = accessToken
+	files_marshalled, _ := json.Marshal(files)
+	files_marshalled = Padding(files_marshalled)
+	enc_key, _ := userlib.HashKDF(files_key, []byte("encryption files"))
+	files_marshalled_enc := userlib.SymEnc(enc_key[:16], userlib.RandomBytes(16), files_marshalled)
+	hash := userlib.Hash([]byte(username + "files"))
+	slicehash := hash[:]
+	userlib.DatastoreSet(bytesToUUID(slicehash), files_marshalled_enc)
+
+	HMAC_key, _ := userlib.HashKDF(files_key, []byte("HMAC files"))
+	files_marshalled_enc_HMAC, _ := userlib.HMACEval(HMAC_key[:16], files_marshalled_enc)
+	hash_HMAC := userlib.Hash([]byte(username + "files HMAC"))
+	slicehash_HMAC := hash_HMAC[:]
+	userlib.DatastoreSet(bytesToUUID(slicehash_HMAC), files_marshalled_enc_HMAC)
 	return nil
 }
 
@@ -187,7 +240,11 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 
 func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, file_id []byte, file_owner_hash []byte,
 	owner []byte, err error) {
-	uuid_accessToken, ok := userdata.Files[filename]
+	files, err := RetrieveHashmap(userdata.Username, userdata.Files_key)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	uuid_accessToken, ok := files[filename]
 	if !ok {
 		return nil, nil, nil, nil, errors.New(strings.ToTitle("Access token not in hashmap!"))
 	}
@@ -201,12 +258,13 @@ func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, fil
 	var AT AccessToken
 	_ = json.Unmarshal(accessToken_marshaled, &AT)
 
-	decrypted_keys, _ := userlib.PKEDec(secret_key, AT.Enc_keys)
+	file_symm, _ = userlib.PKEDec(secret_key, AT.Enc_file_symm)
 	invalid := []byte("This is an invalid accessToken.")
-	if string(decrypted_keys) == string(invalid) {
+	if string(file_symm) == string(invalid) {
 		return nil, nil, nil, nil, errors.New(strings.ToTitle("This user does not have a valid accessToken."))
 	}
-	file_symm, file_id, owner = decrypted_keys[:16], decrypted_keys[16:32], decrypted_keys[32:]
+	file_id, _ = userlib.PKEDec(secret_key, AT.Enc_file_id)
+	owner, _ = userlib.PKEDec(secret_key, AT.Enc_file_owner)
 	file_owner := userlib.Hash(owner)
 	file_owner_hash = file_owner[:]
 
@@ -240,12 +298,15 @@ func DatastoreFile(file_id []byte, owner_hash []byte, file_symm []byte, filedata
 func DatastoreUser(userdata *User, pk userlib.PKEEncKey) {
 	userbytes, _ := json.Marshal(userdata)
 	pwd_bytes := []byte(userdata.password)
-	pub_k, _ := json.Marshal(pk)
 
 	//Storing encrypted user struct in datastore
 	IV_enc := userlib.RandomBytes(16)
-	salt, _ := userlib.HMACEval(pub_k[0:16], []byte(userdata.Username))
 	userbytes = Padding(userbytes)
+
+	pk_salt, _ := userlib.KeystoreGet(userdata.Username + "_salt")
+	salt_marshalled, _ := json.Marshal(pk_salt)
+	salt, _ := userlib.HMACEval(salt_marshalled[:16], []byte(userdata.Username))
+
 	userdata_enc := userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_enc, userbytes)
 	hash := userlib.Hash([]byte(userdata.Username))
 	slicehash := hash[:]
@@ -280,13 +341,18 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	public_key, secret_key, _ := userlib.PKEKeyGen()
 
-	pk, _ := json.Marshal(public_key)
 	//TODO: Check keylen later if necessary - secret keys using keylen = 32, hmacs using keylen = 16
 	userlib.KeystoreSet(user_enckey, public_key)
 
 	userdata.Secret_key = secret_key
+	pk_salt, _, _ := userlib.PKEKeyGen()
+	userlib.KeystoreSet(username + "_salt", pk_salt)
+	salt_marshalled, _ := json.Marshal(pk_salt)
+	salt, _ := userlib.HMACEval(salt_marshalled[:16], []byte(username))
 
-	userdata.AT_HMAC_key = userlib.RandomBytes(16)
+	Tree_pk, Tree_sk, _ := userlib.PKEKeyGen()
+	userlib.KeystoreSet(username + "_treekey", Tree_pk)
+	userdata.Tree_sk = Tree_sk
 
 	signing_sk, signing_verk, _ := userlib.DSKeyGen()
 
@@ -294,23 +360,37 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userlib.KeystoreSet(user_verkey, signing_verk)
 
 	userdata.Signing_sk = signing_sk
-	userdata.Files = make(map[string]userlib.UUID)
+	userdata.Files_key = userlib.RandomBytes(16)
+
+	//initialize empty files hashmap and store in datastore
+	files := make(map[string]userlib.UUID)
+	files_marshalled, _ := json.Marshal(files)
+	files_marshalled = Padding(files_marshalled)
+	enc_key, _ := userlib.HashKDF(userdata.Files_key, []byte("encryption files"))
+	files_marshalled_enc := userlib.SymEnc(enc_key[:16], userlib.RandomBytes(16), files_marshalled)
+	hash := userlib.Hash([]byte(username + "files"))
+	slicehash := hash[:]
+	userlib.DatastoreSet(bytesToUUID(slicehash), files_marshalled_enc)
+
+	HMAC_key, _ := userlib.HashKDF(userdata.Files_key, []byte("HMAC files"))
+	files_marshalled_enc_HMAC, _ := userlib.HMACEval(HMAC_key[:16], files_marshalled_enc)
+	hash_HMAC := userlib.Hash([]byte(username + "files HMAC"))
+	slicehash_HMAC := hash_HMAC[:]
+	userlib.DatastoreSet(bytesToUUID(slicehash_HMAC), files_marshalled_enc_HMAC)
 
 	userbytes, _ := json.Marshal(userdata)
-
 	//Storing encrypted user struct in datastore
 	IV_enc := userlib.RandomBytes(16)
-	salt, _ := userlib.HMACEval(pk[0:16], []byte(username))
 	userbytes = Padding(userbytes)
 	userdata_enc := userlib.SymEnc(userlib.Argon2Key(pwd_bytes, salt, 32), IV_enc, userbytes)
-	hash := userlib.Hash([]byte(username))
-	slicehash := hash[:]
+	hash = userlib.Hash([]byte(username))
+	slicehash = hash[:]
 	userlib.DatastoreSet(bytesToUUID(slicehash), userdata_enc)
 
 	//Storing HMAC of encrypted user struct in datastore
 	userdata_HMAC, _ := userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), userdata_enc)
-	hash_HMAC := userlib.Hash([]byte(username + "HMAC"))
-	slicehash_HMAC := hash_HMAC[:]
+	hash_HMAC = userlib.Hash([]byte(username + "HMAC"))
+	slicehash_HMAC = hash_HMAC[:]
 	userlib.DatastoreSet(bytesToUUID(slicehash_HMAC), userdata_HMAC)
 
 	userdata.password = password
@@ -327,7 +407,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	user_enckey := username + "_enckey"
 	user_verkey := username + "_verkey"
 
-	public_key, ok_enc := userlib.KeystoreGet(user_enckey)
+	_, ok_enc := userlib.KeystoreGet(user_enckey)
 	_, ok_sign := userlib.KeystoreGet(user_verkey)
 
 	if ok_enc && ok_sign {
@@ -343,8 +423,10 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		slicehash_HMAC := hash_HMAC[:]
 		user_HMAC_datastore, _ := userlib.DatastoreGet(bytesToUUID(slicehash_HMAC))
 
-		pk, _ := json.Marshal(public_key)
-		salt, _ := userlib.HMACEval(pk[0:16], []byte(username))
+		pk_salt, _ := userlib.KeystoreGet(username + "_salt")
+		salt_marshalled, _ := json.Marshal(pk_salt)
+		salt, _ := userlib.HMACEval(salt_marshalled[:16], []byte(username))
+
 		pwd_bytes := []byte(password)
 		user_HMAC, _ := userlib.HMACEval(userlib.Argon2Key(pwd_bytes, salt, 16), user)
 
@@ -375,7 +457,11 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	data = Padding(data)
 
 	// case where file exists and someone else may be owner and we are overwriting
-	_, ok := userdata.Files[filename]
+	files, err := RetrieveHashmap(userdata.Username, userdata.Files_key)
+	if err != nil {
+		return err
+	}
+	_, ok := files[filename]
 	if ok {
 		file_symm, file_id, file_owner_hash, _, _ := RetrieveAccessToken(userdata, filename)
 		filedata, _ := RetrieveFile(file_owner_hash, file_symm, file_id)
@@ -430,8 +516,8 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	owner_hash := userlib.Hash([]byte(userdata.Username))
 
-	AT := append(file_symm, file_id...)
-	AT = append(AT, []byte(userdata.Username)...)
+	// AT := append(file_symm, file_id...)
+	// AT = append(AT, []byte(userdata.Username)...)
 
 	signing_sk := userdata.Signing_sk
 
@@ -439,22 +525,31 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	key_hash := userlib.Hash(append(file_id, user_hash[:]...))
 
 	accessToken, _ := uuid.FromBytes(key_hash[:16])
-	encrypted_AT, err := userlib.PKEEnc(pk, AT)
-	if err != nil {
-		return err
-	}
-	signed_enc_AT, _ := userlib.DSSign(signing_sk, encrypted_AT)
+	encrypted_file_symm, _ := userlib.PKEEnc(pk, file_symm)
+	encrypted_file_id, _ := userlib.PKEEnc(pk, file_id)
+	encrypted_file_owner, _ := userlib.PKEEnc(pk, []byte(userdata.Username))
+
+	signed_enc_file_symm, _ := userlib.DSSign(signing_sk, encrypted_file_symm)
+	signed_enc_file_id, _ := userlib.DSSign(signing_sk, encrypted_file_id)
+	signed_enc_file_owner, _ := userlib.DSSign(signing_sk, encrypted_file_owner)
 
 	var encrypted_AT_struct AccessToken
-	encrypted_AT_struct.Enc_keys = encrypted_AT
-	encrypted_AT_struct.Signed_keys = signed_enc_AT
+	encrypted_AT_struct.Enc_file_symm = encrypted_file_symm
+	encrypted_AT_struct.Enc_file_id = encrypted_file_id
+	encrypted_AT_struct.Enc_file_owner = encrypted_file_owner
+	encrypted_AT_struct.Signed_file_symm = signed_enc_file_symm
+	encrypted_AT_struct.Signed_file_id = signed_enc_file_id
+	encrypted_AT_struct.Signed_file_owner = signed_enc_file_owner
 	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
 
 	userlib.DatastoreSet(accessToken, encrypted_AT_marshaled)
 
-	userdata.Files[filename] = accessToken
+	// Encrypting file with Tree_pk
+	Tree_pk, _ := userlib.KeystoreGet(userdata.Username + "_treekey")
+	SetHashmap(filename, accessToken, userdata.Username, userdata.Files_key)
+	//userdata.Files[filename] = accessToken
 	invite_AT, _ := json.Marshal(accessToken)
-	invite_AT_enc, _ := userlib.PKEEnc(pk, invite_AT)
+	invite_AT_enc, _ := userlib.PKEEnc(Tree_pk, invite_AT)
 
 	var usernode Node
 	usernodeptr := &usernode
@@ -608,23 +703,30 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 		return uuid.Nil, errors.New(strings.ToTitle("Recipient username is incorrect."))
 	}
 
-	AT := append(file_symm, file_id...)
-	AT = append(AT, owner...)
-
 	signing_sk := userdata.Signing_sk
+	// AT := append(file_symm, file_id...)
+	// AT = append(AT, owner...)
+	encrypted_file_symm, _ := userlib.PKEEnc(recipient_pk, file_symm)
+	encrypted_file_id, _ := userlib.PKEEnc(recipient_pk, file_id)
+	encrypted_file_owner, _ := userlib.PKEEnc(recipient_pk, owner)
+	signed_enc_file_symm, _ := userlib.DSSign(signing_sk, encrypted_file_symm)
+	signed_enc_file_id, _ := userlib.DSSign(signing_sk, encrypted_file_id)
+	signed_enc_file_owner, _ := userlib.DSSign(signing_sk, encrypted_file_owner)
+
+	var encrypted_AT_struct AccessToken
+	encrypted_AT_struct.Enc_file_symm = encrypted_file_symm
+	encrypted_AT_struct.Enc_file_id = encrypted_file_id
+	encrypted_AT_struct.Enc_file_owner = encrypted_file_owner
+	encrypted_AT_struct.Signed_file_symm = signed_enc_file_symm
+	encrypted_AT_struct.Signed_file_id = signed_enc_file_id
+	encrypted_AT_struct.Signed_file_owner = signed_enc_file_owner
+	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
 
 	recipient_key := append([]byte(recipient), []byte("accessToken")...)
 	recipient_key = append(recipient_key, file_id...)
 	key_hash := userlib.Hash(recipient_key) //changes file_owner_hash
 
 	accessToken, _ = uuid.FromBytes(key_hash[:16])
-	encrypted_AT, _ := userlib.PKEEnc(recipient_pk, AT)
-	signed_enc_AT, _ := userlib.DSSign(signing_sk, encrypted_AT)
-
-	var encrypted_AT_struct AccessToken
-	encrypted_AT_struct.Enc_keys = encrypted_AT
-	encrypted_AT_struct.Signed_keys = signed_enc_AT
-	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
 
 	userlib.DatastoreSet(accessToken, encrypted_AT_marshaled)
 
@@ -636,7 +738,11 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 func (userdata *User) ReceiveFile(filename string, sender string,
 	accessToken uuid.UUID) error {
 
-	_, ok := userdata.Files[filename]
+	files, err := RetrieveHashmap(userdata.Username, userdata.Files_key)
+	if err != nil {
+			return err
+	}
+	_, ok := files[filename]
 	if ok {
 		_, _, _, _, err := RetrieveAccessToken(userdata, filename)
 		if err != nil {
@@ -650,33 +756,35 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	var AT AccessToken
 	_ = json.Unmarshal(accessToken_enc, &AT)
 
-	secret_key := userdata.Secret_key
-
-	decrypted_keys, _ := userlib.PKEDec(secret_key, AT.Enc_keys)
-	_ = append(decrypted_keys, []byte("hello")...)
-
 	sender_verkey, _ := userlib.KeystoreGet(sender + "_verkey")
-	err := userlib.DSVerify(sender_verkey, AT.Enc_keys, AT.Signed_keys)
+	err = userlib.DSVerify(sender_verkey, AT.Enc_file_symm, AT.Signed_file_symm)
 	if err != nil {
 		return err
 	}
-	userdata.Files[filename] = accessToken
+	err = userlib.DSVerify(sender_verkey, AT.Enc_file_id, AT.Signed_file_id)
+	if err != nil {
+		return err
+	}
+	err = userlib.DSVerify(sender_verkey, AT.Enc_file_owner, AT.Signed_file_owner)
+	if err != nil {
+		return err
+	}
+	SetHashmap(filename, accessToken, userdata.Username, userdata.Files_key)
+	//userdata.Files[filename] = accessToken
 
 	file_symm, file_id, file_owner_hash, owner, err := RetrieveAccessToken(userdata, filename)
 	if err != nil {
 		return err
 	}
 
-	owner_pk, _ := userlib.KeystoreGet(string(owner) + "_enckey")
-
 	filedata, err := RetrieveFile(file_owner_hash, file_symm, file_id)
 	if err != nil {
 		return err
 	}
-
+	Tree_pk, _ := userlib.KeystoreGet(string(owner) + "_treekey")
 	participants := filedata.Participants
 	invite_AT, _ := json.Marshal(accessToken)
-	invite_AT_enc, _ := userlib.PKEEnc(owner_pk, invite_AT)
+	invite_AT_enc, _ := userlib.PKEEnc(Tree_pk, invite_AT)
 
 	var usernode Node
 	usernode.Username = userdata.Username
@@ -716,22 +824,23 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	if targetNode == nil {
 		return errors.New(strings.ToTitle("Target does not currently have access to this file."))
 	}
-	root_sk := userdata.Secret_key
+
+	Tree_sk := userdata.Tree_sk
 
 	// for the for subtree of target user, change accessTokens to garbage
 	// garbage := userlib.RandomBytes(16 + 16 + 64)
 	// updateAccessTokens(targetNode, garbage, root_sk)
 	invalid := []byte("This is an invalid accessToken.")
-	updateAccessTokens(targetNode, invalid, root_sk)
+	updateAccessTokens(targetNode, invalid, userlib.RandomBytes(16), userlib.RandomBytes(10), Tree_sk)
 
 	// remove subtree for this node in participants (probably create this helper)
 	removeSubtree(&participants, targetNode.Username)
 
 	// go through pariticipants and replace file_symm
 	file_symm_new := userlib.RandomBytes(16)
-	AT := append(file_symm_new, file_id...)
-	AT = append(AT, owner...)
-	updateAccessTokens(participants.Root, AT, root_sk)
+	// AT := append(file_symm_new, file_id...)
+	// AT = append(AT, owner...)
+	updateAccessTokens(participants.Root, file_symm_new, file_id, owner, Tree_sk)
 
 	//affected by  file_symm: encryption of data, HMAC of data, encryption of filestruct, HMAC of filestruct
 
@@ -786,18 +895,26 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 // iterates through node and all it's children and updates their accessTokens with given udpate_val
 // encrypts the update_val according to who the node belongs to
-func updateAccessTokens(node *Node, update_val []byte, owner_sk userlib.PKEDecKey) (err error) {
+func updateAccessTokens(node *Node, file_symm []byte, file_id []byte, file_owner []byte, owner_sk userlib.PKEDecKey) (err error) {
 	if node == nil {
 		return nil
 	}
 	node_pk, _ := userlib.KeystoreGet(node.Username + "_enckey")
 
-	encrypted_AT, _ := userlib.PKEEnc(node_pk, update_val)
-	signed_enc_AT := userlib.RandomBytes(256)
+	encrypted_file_symm, _ := userlib.PKEEnc(node_pk, file_symm)
+	encrypted_file_id, _ := userlib.PKEEnc(node_pk, file_id)
+	encrypted_file_owner, _ := userlib.PKEEnc(node_pk, file_owner)
+	signed_enc_file_symm := userlib.RandomBytes(256)
+	signed_enc_file_id := userlib.RandomBytes(256)
+	signed_enc_file_owner := userlib.RandomBytes(256)
 
 	var encrypted_AT_struct AccessToken
-	encrypted_AT_struct.Enc_keys = encrypted_AT
-	encrypted_AT_struct.Signed_keys = signed_enc_AT
+	encrypted_AT_struct.Enc_file_symm = encrypted_file_symm
+	encrypted_AT_struct.Enc_file_id = encrypted_file_id
+	encrypted_AT_struct.Enc_file_owner = encrypted_file_owner
+	encrypted_AT_struct.Signed_file_symm = signed_enc_file_symm
+	encrypted_AT_struct.Signed_file_id = signed_enc_file_id
+	encrypted_AT_struct.Signed_file_owner = signed_enc_file_owner
 	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
 
 	AT, _ := userlib.PKEDec(owner_sk, node.User_invite_loc)
@@ -806,7 +923,7 @@ func updateAccessTokens(node *Node, update_val []byte, owner_sk userlib.PKEDecKe
 	userlib.DatastoreSet(AT_uuid, encrypted_AT_marshaled)
 
 	for _, child := range node.Children {
-		updateAccessTokens(child, update_val, owner_sk)
+		updateAccessTokens(child, file_symm, file_id, file_owner, owner_sk)
 	}
 	return nil
 }
