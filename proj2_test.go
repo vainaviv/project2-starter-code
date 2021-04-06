@@ -1236,6 +1236,183 @@ func TestRevokeAppend(t *testing.T) {
 	}
 }
 
+func TestRevokeMultChildren(t *testing.T) {
+	clear()
+	// initalize users
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err := InitUser("charlie", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize charlie", err)
+		return
+	}
+	u4, err2 := InitUser("david", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize david", err2)
+		return
+	}
+	u5, err := InitUser("eric", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u6, err2 := InitUser("fred", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	u7, err2 := InitUser("greg", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	//alice create file
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	//////////////////
+
+	//alice shares with bob & charlie
+	// alice shares with bob
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the file with bob", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Bob failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u.ShareFile("file1", "charlie")
+ 	if err != nil {
+	 	t.Error("Failed to share the file with charlie", err)
+	 	return
+ 	}
+
+ 	err = u3.ReceiveFile("file2", "alice", accessToken)
+ 	if err != nil {
+	 	t.Error("Charlie failed to receive the share message", err)
+	 	return
+ 	}
+
+	//Bob shares with greg
+	accessToken, err = u2.ShareFile("file2", "greg")
+	if err != nil {
+		t.Error("Bob failed to share the file with greg", err)
+		return
+	}
+
+	err = u7.ReceiveFile("file1", "bob", accessToken)
+	if err != nil {
+		t.Error("Greg failed to receive the share message", err)
+		return
+	}
+
+	//Charlie shares with david & eric
+	accessToken, err = u3.ShareFile("file2", "david")
+	if err != nil {
+		t.Error("Charlie failed to share the file with david", err)
+		return
+	}
+
+	err = u4.ReceiveFile("file1", "charlie", accessToken)
+	if err != nil {
+		t.Error("David failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u3.ShareFile("file2", "eric")
+	if err != nil {
+		t.Error("Charlie failed to share the file with eric", err)
+		return
+	}
+
+	err = u5.ReceiveFile("file1", "charlie", accessToken)
+	if err != nil {
+		t.Error("Eric failed to receive the share message", err)
+		return
+	}
+
+	//Eric shares with fred
+	accessToken, err = u5.ShareFile("file1", "fred")
+	if err != nil {
+		t.Error("Eric failed to share the file with eric", err)
+		return
+	}
+
+	err = u6.ReceiveFile("file1", "eric", accessToken)
+	if err != nil {
+		t.Error("Fred failed to receive the share message", err)
+		return
+	}
+
+	//Alice revokes from charlie
+	err = u.RevokeFile("file1", "charlie")
+	if err != nil {
+		t.Error("Alice failed to revoke from charlie", err)
+		return
+	}
+
+	//Check that only alice, bob, greg can load
+	_, err = u.LoadFile("file1")
+	if err != nil {
+		t.Error("Alice failed to load", err)
+		return
+	}
+
+	_, err = u2.LoadFile("file2")
+	if err != nil {
+		t.Error("Bob failed to load", err)
+		return
+	}
+
+	_, err = u3.LoadFile("file2")
+	if err == nil {
+		t.Error("Charlie still has access", err)
+		return
+	}
+
+	_, err = u4.LoadFile("file1")
+	if err == nil {
+		t.Error("David still has access", err)
+		return
+	}
+
+	_, err = u5.LoadFile("file1")
+	if err == nil {
+		t.Error("Eric still has access", err)
+		return
+	}
+
+	_, err = u6.LoadFile("file1")
+	if err == nil {
+		t.Error("Fred still has access", err)
+		return
+	}
+
+	_, err = u7.LoadFile("file1")
+	if err != nil {
+		t.Error("Greg failed to load", err)
+		return
+	}
+
+}
+
+// there is a datastoredelete function
+// write tests for threat models?
+
 // THINGS WE NEED TO DO
 // 11. test all possible combinations of functions
 /*

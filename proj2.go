@@ -261,7 +261,7 @@ func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, fil
 	file_symm, _ = userlib.PKEDec(secret_key, AT.Enc_file_symm)
 	invalid := []byte("This is an invalid accessToken.")
 	if string(file_symm) == string(invalid) {
-		return nil, nil, nil, nil, errors.New(strings.ToTitle("This user does not have a valid accessToken."))
+		return nil, nil, nil, nil, errors.New(strings.ToTitle("This user does not have a valid accessToken." + string(file_symm)))
 	}
 	file_id, _ = userlib.PKEDec(secret_key, AT.Enc_file_id)
 	owner, _ = userlib.PKEDec(secret_key, AT.Enc_file_owner)
