@@ -108,6 +108,132 @@ func TestGet(t *testing.T) {
 
 }
 
+func TestGetUserErrors(t *testing.T) {
+	clear()
+
+	_, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	_, e := GetUser("alice", "fubar")
+
+	if e != nil {
+		t.Error("Failed to get user", e)
+		return
+	}
+
+	// tamper with datastore
+	// datastore := userlib.DatastoreGetMap()
+	hash := userlib.Hash([]byte("alice"))
+	slicehash := hash[:]
+	garbage := userlib.RandomBytes(64)
+	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+
+	_, e = GetUser("alice", "fubar")
+
+	if e == nil {
+		t.Error("Failed to recognize user can't be retrieved.", e)
+		return
+	}
+
+	//////////////
+	clear()
+
+	_, err = InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	_, e = GetUser("alice", "fubar")
+
+	if e != nil {
+		t.Error("Failed to get user", e)
+		return
+	}
+
+	// tamper with datastore
+	// datastore := userlib.DatastoreGetMap()
+	hash = userlib.Hash([]byte("alice" + "HMAC"))
+	slicehash = hash[:]
+	garbage = userlib.RandomBytes(64)
+	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+
+	_, e = GetUser("alice", "fubar")
+
+	if e == nil {
+		t.Error("Failed to recognize user can't be retrieved.", e)
+		return
+	}
+}
+
+func TestRetrieveHashmapErrors(t *testing.T) {
+	clear()
+
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	v := []byte("Test storage")
+	e := u.StoreFile("file1", v)
+
+	if e != nil {
+		t.Error("Failed to store file", e)
+		return
+	}
+
+	hash := userlib.Hash([]byte("alice" + "files"))
+	slicehash := hash[:]
+	garbage := userlib.RandomBytes(64)
+	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+
+	v = []byte("Test overwriting with storage")
+	e = u.StoreFile("file1", v)
+
+	if e == nil {
+		t.Error("Failed to store file", e)
+		return
+	}
+
+	//////////////
+	clear()
+
+	u, err = InitUser("alice", "fubar")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	v = []byte("Test storage")
+	e = u.StoreFile("file1", v)
+
+	if e != nil {
+		t.Error("Failed to store file", e)
+		return
+	}
+
+	hash = userlib.Hash([]byte("alice" + "files HMAC"))
+	slicehash = hash[:]
+	garbage = userlib.RandomBytes(64)
+	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+
+	v = []byte("Test overwriting with storage")
+	e = u.StoreFile("file1", v)
+
+	if e == nil {
+		t.Error("Failed to store file", e)
+		return
+	}
+}
+
 func TestMultipleUserSessions(t *testing.T) {
 	clear()
 
@@ -1758,6 +1884,199 @@ func TestShareALot(t *testing.T) {
 
 }
 
+func TestShareTreeSearch(t *testing.T) {
+	clear()
+	// initalize users
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	u3, err := InitUser("charlie", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize charlie", err)
+		return
+	}
+	u4, err2 := InitUser("david", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize david", err2)
+		return
+	}
+	u5, err := InitUser("eric", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u6, err2 := InitUser("fred", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	u7, err2 := InitUser("greg", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	u8, err2 := InitUser("harry", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize harry", err2)
+		return
+	}
+
+	u9, err2 := InitUser("izzy", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize izzy", err2)
+		return
+	}
+
+	u10, err2 := InitUser("john", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize john", err2)
+		return
+	}
+
+	_, err2 = InitUser("kevin", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize kevin", err2)
+		return
+	}
+
+	//alice create file
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	//////////////////
+
+	//alice shares with bob & charlie
+	// alice shares with bob
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the file with bob", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file1", "alice", accessToken)
+	if err != nil {
+		t.Error("Bob failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u2.ShareFile("file1", "charlie")
+	if err != nil {
+		t.Error("Failed to share the file with charlie", err)
+		return
+	}
+
+	err = u3.ReceiveFile("file1", "bob", accessToken)
+	if err != nil {
+		t.Error("Charlie failed to receive the share message", err)
+		return
+	}
+
+	//Bob shares with greg
+	accessToken, err = u3.ShareFile("file1", "david")
+	if err != nil {
+		t.Error("Bob failed to share the file with greg", err)
+		return
+	}
+
+	err = u4.ReceiveFile("file1", "charlie", accessToken)
+	if err != nil {
+		t.Error("Greg failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u4.ShareFile("file1", "eric")
+	if err != nil {
+		t.Error("Charlie failed to share the file with david", err)
+		return
+	}
+
+	err = u5.ReceiveFile("file1", "david", accessToken)
+	if err != nil {
+		t.Error("David failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u5.ShareFile("file1", "fred")
+	if err != nil {
+		t.Error("Charlie failed to share the file with eric", err)
+		return
+	}
+
+	err = u6.ReceiveFile("file1", "eric", accessToken)
+	if err != nil {
+		t.Error("Eric failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u6.ShareFile("file1", "greg")
+	if err != nil {
+		t.Error("Eric failed to share the file with eric", err)
+		return
+	}
+
+	err = u7.ReceiveFile("file1", "fred", accessToken)
+	if err != nil {
+		t.Error("Fred failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u7.ShareFile("file1", "harry")
+	if err != nil {
+		t.Error("Eric failed to share the file with eric", err)
+		return
+	}
+
+	err = u8.ReceiveFile("file1", "greg", accessToken)
+	if err != nil {
+		t.Error("harry failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u8.ShareFile("file1", "izzy")
+	if err != nil {
+		t.Error("Eric failed to share the file with eric", err)
+		return
+	}
+
+	err = u9.ReceiveFile("file1", "harry", accessToken)
+	if err != nil {
+		t.Error("izzy failed to receive the share message", err)
+		return
+	}
+
+	accessToken, err = u9.ShareFile("file1", "john")
+	if err != nil {
+		t.Error("Eric failed to share the file with eric", err)
+		return
+	}
+
+	err = u10.ReceiveFile("file1", "izzy", accessToken)
+	if err != nil {
+		t.Error("john failed to receive the share message", err)
+		return
+	}
+
+	err = u.RevokeFile("file1", "john")
+	if err != nil {
+		t.Error("Failed to revoke from john", err)
+		return
+	}
+
+	err = u.RevokeFile("file1", "kevin")
+	if err == nil {
+		t.Error("Should have errored")
+		return
+	}
+}
+
 // there is a datastoredelete function
 // write tests for threat models?
 
@@ -1806,17 +2125,82 @@ func TestRemoveSubtree(t *testing.T) {
 
 }*/
 
-// func TestRetrieveAccessTokenError(t *testing.T) {
-// 	clear()
-// 	u2, err2 := InitUser("bob", "foobar")
-// 	if err2 != nil {
-// 		t.Error("Failed to initialize bob", err2)
-// 		return
-// 	}
+func TestRetrieveAccessTokenError(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize bob", err)
+		return
+	}
 
-// 	_, _, _, _, err := RetrieveAccessToken(u2, "file1")
-// 	if err == nil {
-// 		t.Error("Should have errored", err)
-// 		return
-// 	}
-// }
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	_, _, _, _, err = RetrieveAccessToken(u2, "file1")
+	if err == nil {
+		t.Error("Should have errored", err)
+		return
+	}
+
+	//alice share with bob
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	accessToken, _ := u.ShareFile("file1", "bob")
+
+	//bob receive accessToken
+	u2.ReceiveFile("file1", "alice", accessToken)
+
+	//delete the accessToken from datastore
+	userlib.DatastoreDelete(accessToken)
+
+	//expect error when bob tries to load
+	_, err = u2.LoadFile("file1")
+	if err == nil {
+		t.Error("Did not recognize accessToken is missing from datastores", err)
+		return
+	}
+}
+
+func TestRetrieveFileError(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize bob", err)
+		return
+	}
+
+	//alice share with bob
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	_, file_id, file_owner_hash, _, err1 := RetrieveAccessToken(u, "file1")
+	if err1 != nil {
+		t.Error("Failed to store", err1)
+		return
+	}
+
+	key_hash := userlib.Hash(append(file_id, file_owner_hash[:]...))
+	storageKey, _ := uuid.FromBytes(key_hash[:16])
+	userlib.DatastoreDelete(storageKey)
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Did not recognize file is missing from datastores", err)
+		return
+	}
+
+	// HMAC not in datastore, and HMACS don't match
+
+}

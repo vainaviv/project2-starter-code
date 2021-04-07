@@ -517,9 +517,6 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	owner_hash := userlib.Hash([]byte(userdata.Username))
 
-	// AT := append(file_symm, file_id...)
-	// AT = append(AT, []byte(userdata.Username)...)
-
 	signing_sk := userdata.Signing_sk
 
 	user_hash := userlib.Hash(append([]byte(userdata.Username), []byte("accessToken")...))
