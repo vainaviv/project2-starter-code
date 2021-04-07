@@ -2201,6 +2201,120 @@ func TestRetrieveFileError(t *testing.T) {
 		return
 	}
 
-	// HMAC not in datastore, and HMACS don't match
+	// HMAC not in datastore
+	hmac := []byte("HMAC")
+	key_HMAC := append(hmac, file_owner_hash...)
+	key_HMAC = append(file_id, key_HMAC...)
+	key_hash_HMAC := userlib.Hash(key_HMAC)
+	storageKey_HMAC, _ := uuid.FromBytes(key_hash_HMAC[:16])
+	userlib.DatastoreDelete(storageKey_HMAC)
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Did not recognize file HMAC is missing from datastores", err)
+		return
+	}
+
+	// HMACS don't match
+	userlib.DatastoreSet(storageKey_HMAC, userlib.RandomBytes(64))
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Did not recognize file HMACs don't match", err)
+		return
+	}
 
 }
+
+func TestAppendError(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	err = u.AppendFile("file1", []byte(""))
+	if err == nil {
+		t.Error("Failed to recognize no bytes to append", err)
+		return
+	}
+
+	u2, err := InitUser("bob", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize bob", err)
+		return
+	}
+
+	err = u2.AppendFile("file1", []byte("bob can't do this"))
+	if err == nil {
+		t.Error("Failed to recognize bob can't append", err)
+		return
+	}
+
+	//Alice appends a bunch of stuff serially
+	u.AppendFile("file1", []byte("Append1"))
+	u.AppendFile("file1", []byte("Append2"))
+	u.AppendFile("file1", []byte("Append3"))
+	u.AppendFile("file1", []byte("Append4"))
+	u.AppendFile("file1", []byte("Append5"))
+	u.AppendFile("file1", []byte("Append6"))
+	u.AppendFile("file1", []byte("Append7"))
+	u.AppendFile("file1", []byte("Append8"))
+	u.AppendFile("file1", []byte("Append9"))
+	u.AppendFile("file1", []byte("Append10"))
+	u.AppendFile("file1", []byte("Append11"))
+	u.AppendFile("file1", []byte("Append12"))
+
+	v1, err := u.LoadFile("file1")
+	if err != nil {
+		t.Error("Failed to load after multiple appends", err)
+		return
+	}
+	expected_v := []byte("Alice's fileAppend1Append2Append3Append4Append5Append6" +
+		"Append7Append8Append9Append10Append11Append12")
+
+	if !reflect.DeepEqual(expected_v, v1) {
+		t.Error("appended file is not correc", expected_v, v1)
+		return
+	}
+
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Alice failed to share the file with bob", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file1", "alice", accessToken)
+	if err != nil {
+		t.Error("bob failed to receive the share message", err)
+		return
+	}
+
+	err = u2.StoreFile("file1", []byte("Overwriting everything"))
+	if err != nil {
+		t.Error("bob failed to overwrite", err)
+		return
+	}
+
+	v2, err := u.LoadFile("file1")
+	if err != nil {
+		t.Error("Alice failed to load after bob overwrite", err)
+		return
+	}
+
+	expected_v = []byte("Overwriting everything")
+	if !reflect.DeepEqual(expected_v, v2) {
+		t.Error("overwritten file is not correct", expected_v, v2)
+		return
+	}
+
+}
+
+//delete old data after overwriting

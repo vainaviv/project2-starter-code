@@ -483,6 +483,24 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 		data_node_marshal, _ := json.Marshal(data_node)
 		userlib.DatastoreSet(data_loc, data_node_marshal)
 
+		head, _ := userlib.DatastoreGet(filedata.Head)
+		var linked_list LL_node
+		json.Unmarshal(head, &linked_list)
+		loc := filedata.Head
+		for linked_list.Next != uuid.Nil {
+			calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+			if string(calc_HMAC) != string(linked_list.HMAC_Data) {
+				return errors.New(strings.ToTitle("File contents have been corrupted."))
+			}
+
+			next, _ := userlib.DatastoreGet(linked_list.Next)
+			json.Unmarshal(next, &linked_list)
+
+			userlib.DatastoreDelete(loc)
+			loc = linked_list.Next
+		}
+		userlib.DatastoreDelete(loc)
+
 		filedata.Head = data_loc
 		filedata.Tail = data_node.Next
 
@@ -572,10 +590,11 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 		return errors.New(strings.ToTitle("No data to append."))
 	}
 
-	file_symm, file_id, file_owner_hash, _, _ := RetrieveAccessToken(userdata, filename)
-	if file_symm == nil {
-		return errors.New(strings.ToTitle("File not found."))
+	file_symm, file_id, file_owner_hash, _, err := RetrieveAccessToken(userdata, filename)
+	if err != nil {
+		return err
 	}
+
 	filedata, err := RetrieveFile(file_owner_hash, file_symm, file_id)
 	if err != nil {
 		return err
