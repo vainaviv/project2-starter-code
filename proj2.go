@@ -94,12 +94,12 @@ type Tree struct {
 
 // User is the structure definition for a user record.
 type User struct {
-	password    string
-	Username    string
-	Tree_sk			userlib.PKEDecKey
-	Secret_key  userlib.PKEDecKey
-	Signing_sk  userlib.DSSignKey
-	Files_key 	[]byte
+	password   string
+	Username   string
+	Tree_sk    userlib.PKEDecKey
+	Secret_key userlib.PKEDecKey
+	Signing_sk userlib.DSSignKey
+	Files_key  []byte
 	//Files       userlib.UUID // pointer to Hashmap of files: filename → accesstoken|HMAC(file_location)
 }
 
@@ -113,11 +113,11 @@ type File struct {
 }
 
 type AccessToken struct {
-	Enc_file_symm []byte
-	Enc_file_id []byte
-	Enc_file_owner []byte
-	Signed_file_symm []byte
-	Signed_file_id []byte
+	Enc_file_symm     []byte
+	Enc_file_id       []byte
+	Enc_file_owner    []byte
+	Signed_file_symm  []byte
+	Signed_file_id    []byte
 	Signed_file_owner []byte
 	// Enc_keys    []byte
 	// Signed_keys []byte
@@ -167,7 +167,6 @@ func RetrieveHashmap(username string, files_key []byte) (files map[string]userli
 	hash_HMAC := userlib.Hash([]byte(username + "files HMAC"))
 	slicehash_HMAC := hash_HMAC[:]
 	enc_marshalled_files_HMAC, _ := userlib.DatastoreGet(bytesToUUID(slicehash_HMAC))
-
 
 	HMAC_key, _ := userlib.HashKDF(files_key, []byte("HMAC files"))
 	HMAC_calc, _ := userlib.HMACEval(HMAC_key[:16], enc_marshalled_files)
@@ -249,7 +248,6 @@ func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, fil
 		return nil, nil, nil, nil, errors.New(strings.ToTitle("Access token not in hashmap!"))
 	}
 	accessToken_marshaled, ok := userlib.DatastoreGet(uuid_accessToken)
-
 	if !ok {
 		return nil, nil, nil, nil, errors.New(strings.ToTitle("Access Token not in Datastore"))
 	}
@@ -259,10 +257,10 @@ func RetrieveAccessToken(userdata *User, filename string) (file_symm []byte, fil
 	_ = json.Unmarshal(accessToken_marshaled, &AT)
 
 	file_symm, _ = userlib.PKEDec(secret_key, AT.Enc_file_symm)
-	invalid := []byte("This is an invalid accessToken.")
-	if string(file_symm) == string(invalid) {
-		return nil, nil, nil, nil, errors.New(strings.ToTitle("This user does not have a valid accessToken." + string(file_symm)))
-	}
+	// invalid := []byte("This is an invalid accessToken.")
+	// if string(file_symm) == string(invalid) {
+	// 	return nil, nil, nil, nil, errors.New(strings.ToTitle("This user does not have a valid accessToken." + string(file_symm)))
+	// }
 	file_id, _ = userlib.PKEDec(secret_key, AT.Enc_file_id)
 	owner, _ = userlib.PKEDec(secret_key, AT.Enc_file_owner)
 	file_owner := userlib.Hash(owner)
@@ -346,12 +344,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	userdata.Secret_key = secret_key
 	pk_salt, _, _ := userlib.PKEKeyGen()
-	userlib.KeystoreSet(username + "_salt", pk_salt)
+	userlib.KeystoreSet(username+"_salt", pk_salt)
 	salt_marshalled, _ := json.Marshal(pk_salt)
 	salt, _ := userlib.HMACEval(salt_marshalled[:16], []byte(username))
 
 	Tree_pk, Tree_sk, _ := userlib.PKEKeyGen()
-	userlib.KeystoreSet(username + "_treekey", Tree_pk)
+	userlib.KeystoreSet(username+"_treekey", Tree_pk)
 	userdata.Tree_sk = Tree_sk
 
 	signing_sk, signing_verk, _ := userlib.DSKeyGen()
@@ -740,7 +738,7 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 
 	files, err := RetrieveHashmap(userdata.Username, userdata.Files_key)
 	if err != nil {
-			return err
+		return err
 	}
 	_, ok := files[filename]
 	if ok {
@@ -831,7 +829,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	// garbage := userlib.RandomBytes(16 + 16 + 64)
 	// updateAccessTokens(targetNode, garbage, root_sk)
 	invalid := []byte("This is an invalid accessToken.")
-	updateAccessTokens(targetNode, invalid, userlib.RandomBytes(16), userlib.RandomBytes(10), Tree_sk)
+	updateAccessTokens(targetNode, invalid, userlib.RandomBytes(16), userlib.RandomBytes(10), Tree_sk, true)
 
 	// remove subtree for this node in participants (probably create this helper)
 	removeSubtree(&participants, targetNode.Username)
@@ -840,7 +838,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	file_symm_new := userlib.RandomBytes(16)
 	// AT := append(file_symm_new, file_id...)
 	// AT = append(AT, owner...)
-	updateAccessTokens(participants.Root, file_symm_new, file_id, owner, Tree_sk)
+	updateAccessTokens(participants.Root, file_symm_new, file_id, owner, Tree_sk, false)
 
 	//affected by  file_symm: encryption of data, HMAC of data, encryption of filestruct, HMAC of filestruct
 
@@ -895,7 +893,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 // iterates through node and all it's children and updates their accessTokens with given udpate_val
 // encrypts the update_val according to who the node belongs to
-func updateAccessTokens(node *Node, file_symm []byte, file_id []byte, file_owner []byte, owner_sk userlib.PKEDecKey) (err error) {
+func updateAccessTokens(node *Node, file_symm []byte, file_id []byte, file_owner []byte, owner_sk userlib.PKEDecKey, delete bool) (err error) {
 	if node == nil {
 		return nil
 	}
@@ -922,8 +920,12 @@ func updateAccessTokens(node *Node, file_symm []byte, file_id []byte, file_owner
 	json.Unmarshal(AT, &AT_uuid)
 	userlib.DatastoreSet(AT_uuid, encrypted_AT_marshaled)
 
+	if delete {
+		userlib.DatastoreDelete(AT_uuid)
+	}
+
 	for _, child := range node.Children {
-		updateAccessTokens(child, file_symm, file_id, file_owner, owner_sk)
+		updateAccessTokens(child, file_symm, file_id, file_owner, owner_sk, delete)
 	}
 	return nil
 }
