@@ -461,7 +461,10 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	}
 	_, ok := files[filename]
 	if ok {
-		file_symm, file_id, file_owner_hash, _, _ := RetrieveAccessToken(userdata, filename)
+		file_symm, file_id, file_owner_hash, _, err1 := RetrieveAccessToken(userdata, filename)
+		if err1 != nil {
+			return err1
+		}
 		filedata, _ := RetrieveFile(file_owner_hash, file_symm, file_id)
 
 		var data_node LL_node
@@ -644,7 +647,7 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	file_id_str := string(file_id)
 
 	if file_id_str != string(filedata.File_ID) {
-		return nil, errors.New(strings.ToTitle("Did not retrieve the correct file."))
+		return nil, errors.New(strings.ToTitle("Did not retrieve the correct file (wrong file id)."))
 	}
 
 	head, _ := userlib.DatastoreGet(filedata.Head)
@@ -668,10 +671,6 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 		next, _ := userlib.DatastoreGet(linked_list.Next)
 		json.Unmarshal(next, &linked_list)
 	}
-	// calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
-	// if string(calc_HMAC) != string(linked_list.HMAC_Data) {
-	// 	return nil, errors.New(strings.ToTitle("File contents have been corrupted end."))
-	// }
 	data := userlib.SymDec(file_symm_data, linked_list.Data)
 	data = Unpad(data)
 	dataBytes = append(dataBytes, data...)
@@ -695,6 +694,9 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 
 	if TreeSearch(&participants, userdata.Username) == nil {
 		return uuid.Nil, errors.New(strings.ToTitle("This user does not have access to the file."))
+	}
+	if TreeSearch(&participants, recipient) != nil {
+		return uuid.Nil, errors.New(strings.ToTitle("This recipient already has access to the file."))
 	}
 	recipient_pk, ok := userlib.KeystoreGet(recipient + "_enckey")
 	if !ok {
@@ -720,11 +722,11 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 	encrypted_AT_struct.Signed_file_owner = signed_enc_file_owner
 	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
 
-	recipient_key := append([]byte(recipient), []byte("accessToken")...)
-	recipient_key = append(recipient_key, file_id...)
-	key_hash := userlib.Hash(recipient_key) //changes file_owner_hash
+	// recipient_key := append([]byte(recipient), []byte("accessToken")...)
+	// recipient_key = append(recipient_key, file_id...)
+	// key_hash := userlib.Hash(recipient_key) //changes file_owner_hash
 
-	accessToken, _ = uuid.FromBytes(key_hash[:16])
+	accessToken = uuid.New()
 
 	userlib.DatastoreSet(accessToken, encrypted_AT_marshaled)
 
@@ -742,9 +744,10 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	}
 	_, ok := files[filename]
 	if ok {
+		// share after revoke puts access token exactly where it was before making, this method useless
 		_, _, _, _, err := RetrieveAccessToken(userdata, filename)
-		if err != nil {
-			return err
+		if err == nil {
+			return errors.New(strings.ToTitle("This user already has a file with filename:" + filename))
 		}
 	}
 
@@ -922,6 +925,10 @@ func updateAccessTokens(node *Node, file_symm []byte, file_id []byte, file_owner
 
 	if delete {
 		userlib.DatastoreDelete(AT_uuid)
+		_, ok := userlib.DatastoreGet(AT_uuid)
+		if ok {
+			return errors.New(strings.ToTitle("AT_uuid was not deleted from datastore."))
+		}
 	}
 
 	for _, child := range node.Children {
