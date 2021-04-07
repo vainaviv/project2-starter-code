@@ -1167,21 +1167,6 @@ func TestRevokeShare_2(t *testing.T) {
 	///////////////////
 }
 
-func TestRetrieveAccessTokenError(t *testing.T) {
-	clear()
-	u2, err2 := InitUser("bob", "foobar")
-	if err2 != nil {
-		t.Error("Failed to initialize bob", err2)
-		return
-	}
-
-	_, _, _, _, err := RetrieveAccessToken(u2, "file1")
-	if err == nil {
-		t.Error("Should have errored", err)
-		return
-	}
-}
-
 func TestRevokeAppend(t *testing.T) {
 	// test error check: share, revoke, reshare
 	clear()
@@ -1534,3 +1519,18 @@ func TestRemoveSubtree(t *testing.T) {
 	}
 
 }*/
+
+// func TestRetrieveAccessTokenError(t *testing.T) {
+// 	clear()
+// 	u2, err2 := InitUser("bob", "foobar")
+// 	if err2 != nil {
+// 		t.Error("Failed to initialize bob", err2)
+// 		return
+// 	}
+
+// 	_, _, _, _, err := RetrieveAccessToken(u2, "file1")
+// 	if err == nil {
+// 		t.Error("Should have errored", err)
+// 		return
+// 	}
+// }
