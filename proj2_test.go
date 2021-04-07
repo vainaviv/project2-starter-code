@@ -130,7 +130,8 @@ func TestGetUserErrors(t *testing.T) {
 	hash := userlib.Hash([]byte("alice"))
 	slicehash := hash[:]
 	garbage := userlib.RandomBytes(64)
-	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+	uuid_hash, _ := uuid.FromBytes(slicehash)
+	userlib.DatastoreSet(uuid_hash, garbage)
 
 	_, e = GetUser("alice", "fubar")
 
@@ -161,7 +162,8 @@ func TestGetUserErrors(t *testing.T) {
 	hash = userlib.Hash([]byte("alice" + "HMAC"))
 	slicehash = hash[:]
 	garbage = userlib.RandomBytes(64)
-	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+	uuid_hash, _ = uuid.FromBytes(slicehash)
+	userlib.DatastoreSet(uuid_hash, garbage)
 
 	_, e = GetUser("alice", "fubar")
 
@@ -192,7 +194,8 @@ func TestRetrieveHashmapErrors(t *testing.T) {
 	hash := userlib.Hash([]byte("alice" + "files"))
 	slicehash := hash[:]
 	garbage := userlib.RandomBytes(64)
-	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+	uuid_hash, _ := uuid.FromBytes(slicehash)
+	userlib.DatastoreSet(uuid_hash, garbage)
 
 	v = []byte("Test overwriting with storage")
 	e = u.StoreFile("file1", v)
@@ -223,7 +226,8 @@ func TestRetrieveHashmapErrors(t *testing.T) {
 	hash = userlib.Hash([]byte("alice" + "files HMAC"))
 	slicehash = hash[:]
 	garbage = userlib.RandomBytes(64)
-	userlib.DatastoreSet(bytesToUUID(slicehash), garbage)
+	uuid_hash, _ = uuid.FromBytes(slicehash)
+	userlib.DatastoreSet(uuid_hash, garbage)
 
 	v = []byte("Test overwriting with storage")
 	e = u.StoreFile("file1", v)
@@ -2169,7 +2173,7 @@ func TestRetrieveAccessTokenError(t *testing.T) {
 	}
 }
 
-func TestRetrieveFileError(t *testing.T) {
+/*func TestRetrieveFileError(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "foobar")
 	if err != nil {
@@ -2177,7 +2181,7 @@ func TestRetrieveFileError(t *testing.T) {
 		return
 	}
 
-	//alice share with bob
+	//alice stores file
 	v := []byte("Alice's file")
 	err = u.StoreFile("file1", v)
 	if err != nil {
@@ -2223,7 +2227,7 @@ func TestRetrieveFileError(t *testing.T) {
 		return
 	}
 
-}
+}*/
 
 func TestAppendError(t *testing.T) {
 	clear()
