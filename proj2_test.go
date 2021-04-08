@@ -5,9 +5,10 @@ package proj2
 
 import (
 	_ "encoding/hex"
-	 "encoding/json"
+	"encoding/json"
 	_ "errors"
 	"reflect"
+	"strconv"
 	_ "strconv"
 	_ "strings"
 	"testing"
@@ -2143,11 +2144,11 @@ func TestRetrieveAccessTokenError(t *testing.T) {
 		return
 	}
 
-/*	_, _, _, _, err = RetrieveAccessToken(u2, "file1")
-	if err == nil {
-		t.Error("Should have errored", err)
-		return
-	}*/
+	/*	_, _, _, _, err = RetrieveAccessToken(u2, "file1")
+		if err == nil {
+			t.Error("Should have errored", err)
+			return
+		}*/
 
 	//alice share with bob
 	v := []byte("Alice's file")
@@ -2360,7 +2361,7 @@ func TestLoadErrorSwap(t *testing.T) {
 	ds := userlib.DatastoreGetMap()
 	ds_orig := make(map[uuid.UUID][]byte)
 	for k, v := range ds {
-	 ds_orig[k] = v
+		ds_orig[k] = v
 	}
 
 	v := []byte("Alice's file")
@@ -2373,15 +2374,15 @@ func TestLoadErrorSwap(t *testing.T) {
 	ds = userlib.DatastoreGetMap()
 	ds_orig2 := make(map[uuid.UUID][]byte)
 	for k, v := range ds {
-	 ds_orig2[k] = v
+		ds_orig2[k] = v
 	}
 
 	diff := []uuid.UUID{}
 
 	for k, _ := range ds_orig2 {
-    	if _, ok := ds_orig[k]; !ok {
-        	diff = append(diff, k)
-    	}
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
 	}
 	var file1 uuid.UUID
 	file1 = uuid.Nil
@@ -2418,15 +2419,15 @@ func TestLoadErrorSwap(t *testing.T) {
 	ds = userlib.DatastoreGetMap()
 	ds_orig3 := make(map[uuid.UUID][]byte)
 	for k, v := range ds {
-	 ds_orig3[k] = v
+		ds_orig3[k] = v
 	}
 
 	diff2 := []uuid.UUID{}
 
 	for k, _ := range ds_orig3 {
-			if _, ok := ds_orig2[k]; !ok {
-					diff2 = append(diff2, k)
-			}
+		if _, ok := ds_orig2[k]; !ok {
+			diff2 = append(diff2, k)
+		}
 	}
 	var file2 uuid.UUID
 	file2 = uuid.Nil
@@ -2480,7 +2481,7 @@ func TestLoadErrorCorrupted(t *testing.T) {
 	ds := userlib.DatastoreGetMap()
 	ds_orig := make(map[uuid.UUID][]byte)
 	for k, v := range ds {
-	 ds_orig[k] = v
+		ds_orig[k] = v
 	}
 
 	v := []byte("Alice's file")
@@ -2493,42 +2494,28 @@ func TestLoadErrorCorrupted(t *testing.T) {
 	ds = userlib.DatastoreGetMap()
 	ds_orig2 := make(map[uuid.UUID][]byte)
 	for k, v := range ds {
-	 ds_orig2[k] = v
+		ds_orig2[k] = v
 	}
 
 	diff := []uuid.UUID{}
 
 	for k, _ := range ds_orig2 {
-    	if _, ok := ds_orig[k]; !ok {
-        	diff = append(diff, k)
-    	}
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
 	}
 	var file1 uuid.UUID
 	file1 = uuid.Nil
-	var file1HMACuuid uuid.UUID
-	file1HMACuuid = uuid.Nil
-	var file1_HMAC []byte
-	file1_HMAC = nil
-	var file1_contents []byte
 
 	for i := 0; i < len(diff); i++ {
 		elem := diff[i]
 		element, _ := userlib.DatastoreGet(elem)
-		//userlib.DebugMsg(strconv.Itoa(len(element)))
-		if len(element) == 64 {
-			file1HMACuuid = elem
-			file1_HMAC = element
-		} else {
-			var f1 File
-			err = json.Unmarshal(element, &f1)
-			if err == nil {
-				file1 = elem
-				file1_contents = element
-			}
+		var f1 File
+		err = json.Unmarshal(element, &f1)
+		if err == nil {
+			file1 = elem
 		}
 	}
-	reflect.DeepEqual(file1_HMAC, file1HMACuuid)
-	reflect.DeepEqual(file1_HMAC, file1_contents)
 	userlib.DatastoreSet(file1, userlib.RandomBytes(120))
 
 	_, err = u.LoadFile("file1")
@@ -2552,7 +2539,7 @@ func TestLoadErrorCorruptedHash(t *testing.T) {
 	ds := userlib.DatastoreGetMap()
 	ds_orig := make(map[uuid.UUID][]byte)
 	for k, v := range ds {
-	 ds_orig[k] = v
+		ds_orig[k] = v
 	}
 
 	v := []byte("Alice's file")
@@ -2565,23 +2552,18 @@ func TestLoadErrorCorruptedHash(t *testing.T) {
 	ds = userlib.DatastoreGetMap()
 	ds_orig2 := make(map[uuid.UUID][]byte)
 	for k, v := range ds {
-	 ds_orig2[k] = v
+		ds_orig2[k] = v
 	}
 
 	diff := []uuid.UUID{}
 
 	for k, _ := range ds_orig2 {
-    	if _, ok := ds_orig[k]; !ok {
-        	diff = append(diff, k)
-    	}
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
 	}
-	var file1 uuid.UUID
-	file1 = uuid.Nil
 	var file1HMACuuid uuid.UUID
 	file1HMACuuid = uuid.Nil
-	var file1_HMAC []byte
-	file1_HMAC = nil
-	var file1_contents []byte
 
 	for i := 0; i < len(diff); i++ {
 		elem := diff[i]
@@ -2589,18 +2571,8 @@ func TestLoadErrorCorruptedHash(t *testing.T) {
 		//userlib.DebugMsg(strconv.Itoa(len(element)))
 		if len(element) == 64 {
 			file1HMACuuid = elem
-			file1_HMAC = element
-		} else {
-			var f1 File
-			err = json.Unmarshal(element, &f1)
-			if err == nil {
-				file1 = elem
-				file1_contents = element
-			}
 		}
 	}
-	reflect.DeepEqual(file1, file1_HMAC)
-	reflect.DeepEqual(file1, file1_contents)
 	userlib.DatastoreSet(file1HMACuuid, userlib.RandomBytes(64))
 
 	_, err = u.LoadFile("file1")
@@ -2611,6 +2583,493 @@ func TestLoadErrorCorruptedHash(t *testing.T) {
 
 }
 
-//1. Swap full file struct
-//2. Corrupt inside of a file struct
-//3. Corrupt file data
+func TestCorruptFileData(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	ds := userlib.DatastoreGetMap()
+	ds_orig := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig[k] = v
+	}
+
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig2 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig2[k] = v
+	}
+
+	diff := []uuid.UUID{}
+
+	for k, _ := range ds_orig2 {
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+	var file1_data uuid.UUID
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			file1_data = elem
+		}
+	}
+	userlib.DatastoreSet(file1_data, []byte("corrupt data"))
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Failed to detect corrupted file data", err)
+		return
+	}
+}
+
+func TestTruncatedFileData(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	ds := userlib.DatastoreGetMap()
+	ds_orig := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig[k] = v
+	}
+
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig2 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig2[k] = v
+	}
+
+	diff := []uuid.UUID{}
+
+	for k, _ := range ds_orig2 {
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+	var file1_data uuid.UUID
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			file1_data = elem
+		}
+	}
+	data, _ := userlib.DatastoreGet(file1_data)
+	data = data[:int(len(data)/2)]
+	userlib.DatastoreSet(file1_data, data)
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Failed to detect truncated file data", err)
+		return
+	}
+}
+
+func TestClearFileData(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	ds := userlib.DatastoreGetMap()
+	ds_orig := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig[k] = v
+	}
+
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig2 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig2[k] = v
+	}
+
+	diff := []uuid.UUID{}
+
+	for k, _ := range ds_orig2 {
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+	var file1_data uuid.UUID
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			file1_data = elem
+		}
+	}
+	userlib.DatastoreSet(file1_data, []byte(""))
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Failed to detect clear file data", err)
+		return
+	}
+}
+
+func TestDelFirstNode(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	ds := userlib.DatastoreGetMap()
+	ds_orig := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig[k] = v
+	}
+
+	//////// Get node 1
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig2 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig2[k] = v
+	}
+
+	diff := []uuid.UUID{}
+
+	for k, _ := range ds_orig2 {
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+
+	var node1 uuid.UUID
+	node1 = uuid.Nil
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			node1 = elem
+		}
+	}
+	/////////////////
+
+	err = u.AppendFile("file1", []byte("Appending data 1"))
+	if err != nil {
+		t.Error("Failed to append 1", err)
+		return
+	}
+
+	err = u.AppendFile("file1", []byte("Appending data 2"))
+	if err != nil {
+		t.Error("Failed to append 2", err)
+		return
+	}
+
+	userlib.DatastoreDelete(node1)
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Failed to detect node 1 deleted", err)
+		return
+	}
+}
+
+func TestDelMiddleNode(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	ds := userlib.DatastoreGetMap()
+	ds_orig := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig[k] = v
+	}
+
+	//////// Get node 1
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig2 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig2[k] = v
+	}
+
+	diff := []uuid.UUID{}
+
+	for k, _ := range ds_orig2 {
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+
+	var node1 uuid.UUID
+	node1 = uuid.Nil
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			node1 = elem
+		}
+	}
+	/////////////////
+
+	/////////// Get Node 2
+	err = u.AppendFile("file1", []byte("Appending data 1"))
+	if err != nil {
+		t.Error("Failed to append 1", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig3 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig3[k] = v
+	}
+
+	diff = []uuid.UUID{}
+
+	for k, _ := range ds_orig3 {
+		if _, ok := ds_orig2[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+
+	var node2 uuid.UUID
+	node2 = uuid.Nil
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			node2 = elem
+		}
+	}
+	///////////////
+
+	/////////// Get Node 3
+	err = u.AppendFile("file1", []byte("Appending data 2"))
+	if err != nil {
+		t.Error("Failed to append 2", err)
+		return
+	}
+
+	reflect.DeepEqual(node1, node2)
+	userlib.DatastoreDelete(node2)
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Failed to detect node 1 deleted", err)
+		return
+	}
+}
+
+func TestDelEndNode(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	ds := userlib.DatastoreGetMap()
+	ds_orig := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig[k] = v
+	}
+
+	//////// Get node 1
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig2 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig2[k] = v
+	}
+
+	diff := []uuid.UUID{}
+
+	for k, _ := range ds_orig2 {
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+
+	var node1 uuid.UUID
+	node1 = uuid.Nil
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			node1 = elem
+		}
+	}
+	/////////////////
+
+	/////////// Get Node 2
+	err = u.AppendFile("file1", []byte("Appending data 1"))
+	if err != nil {
+		t.Error("Failed to append 1", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig3 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig3[k] = v
+	}
+
+	diff = []uuid.UUID{}
+
+	for k, _ := range ds_orig3 {
+		if _, ok := ds_orig2[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+
+	var node2 uuid.UUID
+	node2 = uuid.Nil
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			node2 = elem
+		}
+	}
+	///////////////
+
+	/////////// Get Node 2
+	err = u.AppendFile("file1", []byte("Appending data 2"))
+	if err != nil {
+		t.Error("Failed to append 2", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig4 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig4[k] = v
+	}
+
+	diff = []uuid.UUID{}
+
+	for k, _ := range ds_orig4 {
+		if _, ok := ds_orig3[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+
+	var node3 uuid.UUID
+	node3 = uuid.Nil
+
+	for i := 0; i < len(diff); i++ {
+		elem := diff[i]
+		element, _ := userlib.DatastoreGet(elem)
+		userlib.DebugMsg(strconv.Itoa(len(element)))
+		var node LL_node
+		err = json.Unmarshal(element, &node)
+		if err == nil {
+			node3 = elem
+		}
+	}
+	///////////////
+
+	reflect.DeepEqual(node1, node2)
+
+	userlib.DatastoreDelete(node3)
+
+	_, err = u.LoadFile("file1")
+	if err == nil {
+		t.Error("Failed to detect node 3 deleted", err)
+		return
+	}
+}
+
+//5. flip bits around

@@ -123,6 +123,15 @@ type AccessToken struct {
 	// Signed_keys []byte
 }
 
+func Find(slice []uuid.UUID, val uuid.UUID) (found bool) {
+	for _, item := range slice {
+		if item == val {
+			return true
+		}
+	}
+	return false
+}
+
 func Padding(msg []byte) (padded_msg []byte) {
 	msg_len := len(msg)
 	padding := 16 - msg_len%16
@@ -136,6 +145,15 @@ func Unpad(ciphertext []byte) (unpadded_msg []byte) {
 	padding := int(ciphertext[len(ciphertext)-1])
 	unpadded_msg = ciphertext[0 : len(ciphertext)-padding]
 	return unpadded_msg
+}
+
+func CheckMult16(text []byte) (mult bool) {
+	if len(text) > 16 {
+		if len(text)%16 == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func TreeSearch(participants *Tree, username string) (node *Node) {
@@ -175,6 +193,12 @@ func RetrieveHashmap(username string, files_key []byte) (files map[string]userli
 	}
 
 	dec_key, _ := userlib.HashKDF(files_key, []byte("encryption files"))
+	if !CheckMult16(enc_marshalled_files) {
+		return nil, errors.New(strings.ToTitle("File has been corrupted."))
+	}
+	if !CheckMult16(enc_marshalled_files) {
+		return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in RevokeFile."))
+	}
 	marshalled_files := userlib.SymDec(dec_key[:16], enc_marshalled_files)
 	marshalled_files = Unpad(marshalled_files)
 	json.Unmarshal(marshalled_files, &files)
@@ -212,7 +236,10 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 	}
 	file_symm_struct, _ := userlib.HashKDF(file_symm, []byte("encrypt struct"))
 	file_symm_struct = file_symm_struct[:16]
-	dataJSON_dec := userlib.SymDec(file_symm_struct, dataJSON) // check why this is slice out of range error
+	if !CheckMult16(dataJSON) {
+		return nil, errors.New(strings.ToTitle("File has been corrupted in RetrieveFile."))
+	}
+	dataJSON_dec := userlib.SymDec(file_symm_struct, dataJSON)
 	dataJSON_dec = Unpad(dataJSON_dec)
 	var filedata File
 	filedataptr = &filedata
@@ -430,6 +457,9 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 		if !userlib.HMACEqual(user_HMAC, user_HMAC_datastore) {
 			return nil, errors.New(strings.ToTitle("HMAC of user structs don't match."))
+		}
+		if !CheckMult16(user) {
+			return nil, errors.New(strings.ToTitle("User has been corrupted in GetUser."))
 		}
 		user = userlib.SymDec(userlib.Argon2Key(pwd_bytes, salt, 32), user)
 		user = Unpad(user)
@@ -675,21 +705,46 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	file_symm_data = file_symm_data[:16]
 	file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
 	file_symm_data_HMAC = file_symm_data_HMAC[:16]
+	visited := []uuid.UUID{filedata.Head}
+	found := Find(visited, linked_list.Next)
+	curr_uuid := filedata.Head
 
-	for linked_list.Next != uuid.Nil {
+	for linked_list.Next != uuid.Nil && !found {
 		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
 		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 			return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
 		}
+		if !CheckMult16(linked_list.Data) {
+			return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in LoadFile."))
+		}
 		data := userlib.SymDec(file_symm_data, linked_list.Data)
 		data = Unpad(data)
 		dataBytes = append(dataBytes, data...)
+
+		// checking for loops and proper termination and advancing to the next node
+		visited = append(visited, linked_list.Next)
 		next, _ := userlib.DatastoreGet(linked_list.Next)
+		curr_uuid = linked_list.Next
 		json.Unmarshal(next, &linked_list)
+		found = Find(visited, linked_list.Next)
 	}
-	data := userlib.SymDec(file_symm_data, linked_list.Data)
-	data = Unpad(data)
-	dataBytes = append(dataBytes, data...)
+	if !found {
+		if curr_uuid != filedata.Tail {
+			return nil, errors.New(strings.ToTitle("Did not complete going through the data."))
+		}
+		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
+			return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
+		}
+		if !CheckMult16(linked_list.Data) {
+			return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in LoadFile."))
+		}
+		data := userlib.SymDec(file_symm_data, linked_list.Data)
+		data = Unpad(data)
+		dataBytes = append(dataBytes, data...)
+	} else {
+		return nil, errors.New(strings.ToTitle("Cycle detected in data."))
+	}
 
 	return dataBytes, nil
 }
@@ -881,6 +936,9 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 			return errors.New(strings.ToTitle("File contents have been corrupted in revoke."))
 		}
+		if !CheckMult16(linked_list.Data) {
+			return errors.New(strings.ToTitle("Linked list data has been corrupted in RevokeFile."))
+		}
 		data := userlib.SymDec(file_symm_data, linked_list.Data)
 		iv := userlib.RandomBytes(16)
 		data = userlib.SymEnc(file_symm_new_data, iv, data)
@@ -896,6 +954,9 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
 	if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 		return errors.New(strings.ToTitle("File contents have been corrupted in revoke end."))
+	}
+	if !CheckMult16(linked_list.Data) {
+		return errors.New(strings.ToTitle("Linked list data has been corrupted in RevokeFile."))
 	}
 	data := userlib.SymDec(file_symm_data, linked_list.Data)
 	iv := userlib.RandomBytes(16)
