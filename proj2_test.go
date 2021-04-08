@@ -130,7 +130,7 @@ func TestGetUserErrors(t *testing.T) {
 	hash := userlib.Hash([]byte("alice"))
 	slicehash := hash[:]
 	garbage := userlib.RandomBytes(64)
-	uuid_hash, _ := uuid.FromBytes(slicehash)
+	uuid_hash, _ := uuid.FromBytes(slicehash[:16])
 	userlib.DatastoreSet(uuid_hash, garbage)
 
 	_, e = GetUser("alice", "fubar")
@@ -162,7 +162,7 @@ func TestGetUserErrors(t *testing.T) {
 	hash = userlib.Hash([]byte("alice" + "HMAC"))
 	slicehash = hash[:]
 	garbage = userlib.RandomBytes(64)
-	uuid_hash, _ = uuid.FromBytes(slicehash)
+	uuid_hash, _ = uuid.FromBytes(slicehash[:16])
 	userlib.DatastoreSet(uuid_hash, garbage)
 
 	_, e = GetUser("alice", "fubar")
@@ -194,7 +194,7 @@ func TestRetrieveHashmapErrors(t *testing.T) {
 	hash := userlib.Hash([]byte("alice" + "files"))
 	slicehash := hash[:]
 	garbage := userlib.RandomBytes(64)
-	uuid_hash, _ := uuid.FromBytes(slicehash)
+	uuid_hash, _ := uuid.FromBytes(slicehash[:16])
 	userlib.DatastoreSet(uuid_hash, garbage)
 
 	v = []byte("Test overwriting with storage")
@@ -226,7 +226,7 @@ func TestRetrieveHashmapErrors(t *testing.T) {
 	hash = userlib.Hash([]byte("alice" + "files HMAC"))
 	slicehash = hash[:]
 	garbage = userlib.RandomBytes(64)
-	uuid_hash, _ = uuid.FromBytes(slicehash)
+	uuid_hash, _ = uuid.FromBytes(slicehash[:16])
 	userlib.DatastoreSet(uuid_hash, garbage)
 
 	v = []byte("Test overwriting with storage")
