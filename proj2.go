@@ -502,7 +502,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 		userlib.DatastoreDelete(loc)
 
 		filedata.Head = data_loc
-		filedata.Tail = data_node.Next
+		filedata.Tail = data_loc
 
 		DatastoreFile(file_id, file_owner_hash, file_symm, filedata)
 		return
