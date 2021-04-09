@@ -2642,3 +2642,53 @@ func TestRevokeDataErrors(t *testing.T) {
 		userlib.DatastoreSet(elem, element)
 	}
 }
+
+func TestAppendEfficiency(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	//// Initialize and edit datastore
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	v = []byte("Alice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's file")
+	err = u.StoreFile("file2", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	userlib.DatastoreResetBandwidth()
+	u.AppendFile("file1", []byte("More data."))
+
+	b1 := userlib.DatastoreGetBandwidth()
+
+	userlib.DatastoreResetBandwidth()
+	u.AppendFile("file2", []byte("More data."))
+
+	b2 := userlib.DatastoreGetBandwidth()
+
+	difference := b1 - b2
+	if difference < 0 {
+		if -1*difference > 500 {
+			t.Error("Not an efficient append", b1, b2)
+			return
+		}
+	} else {
+		if difference > 500 {
+			t.Error("Not an efficient append", difference)
+			return
+		}
+	}
+
+}
