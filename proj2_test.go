@@ -365,6 +365,63 @@ func TestMultipleUserSessions(t *testing.T) {
 	}
 }
 
+/*
+func TestMultipleUserSessions_2(t *testing.T) {
+	clear()
+
+	_, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	alice1, err := GetUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to get user", err)
+		return
+	}
+
+	alice2, err := GetUser("alice", "fbar")
+	if err == nil {
+		t.Error("Failed to recognize wrong password second session", err)
+		return
+	}
+
+	alice2, err = GetUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to get user", err)
+		return
+	}
+	v := []byte("This is my file")
+	alice1.StoreFile("file1", v)
+
+	_, err = InitUser("bob", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	bob1, err := GetUser("bob", "fubar")
+	if err != nil {
+		t.Error("Failed to get user", err)
+		return
+	}
+
+	bob2, err := GetUser("bob", "fubar")
+	if err != nil {
+		t.Error("Failed to get user", err)
+		return
+	}
+
+	accessToken, err := alice2.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Alice2 failed to share file1 with bob", err)
+		return
+	}
+
+
+}*/
+
 func TestStorage(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")
@@ -2661,13 +2718,14 @@ func TestAppendEfficiency(t *testing.T) {
 		return
 	}
 
-	v = []byte("Alice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's file")
-	err = u.StoreFile("file2", v)
+	v1 := []byte("Alice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's fileAlice's file")
+	err = u.StoreFile("file2", v1)
 	if err != nil {
 		t.Error("Failed to store", err)
 		return
 	}
 
+	//Check that append doesn't scale with size of file
 	userlib.DatastoreResetBandwidth()
 	u.AppendFile("file1", []byte("More data."))
 
@@ -2677,18 +2735,109 @@ func TestAppendEfficiency(t *testing.T) {
 	u.AppendFile("file2", []byte("More data."))
 
 	b2 := userlib.DatastoreGetBandwidth()
-
 	difference := b1 - b2
+
 	if difference < 0 {
-		if -1*difference > 500 {
+		if -1*difference > 50 {
 			t.Error("Not an efficient append", b1, b2)
 			return
 		}
 	} else {
-		if difference > 500 {
+		if difference > 50 {
 			t.Error("Not an efficient append", difference)
 			return
 		}
 	}
 
+	// Check that append doesn't scale with number of appends
+	userlib.DatastoreResetBandwidth()
+	u.StoreFile("file1", []byte("Orig data"))
+
+	for i :=0; i < 50; i++ {
+		u.AppendFile("file1", []byte("append"))
+	}
+
+	b1 = userlib.DatastoreGetBandwidth()
+	userlib.DatastoreResetBandwidth()
+	for i :=50; i < 100; i++ {
+		u.AppendFile("file1", []byte("append"))
+	}
+
+	b2 = userlib.DatastoreGetBandwidth()
+	difference = b1 - b2
+
+	if difference < 0 {
+		if -1*difference > 5000 {
+			t.Error("Not an efficient append num appends", b1, b2)
+			return
+		}
+	} else {
+		if difference > 5000 {
+			t.Error("Not an efficient append num appends", b1, b2)
+			return
+		}
+	}
+
+	//AppendFile cannot scale with the number of previous appends (from piazza)
+	u.StoreFile("file1", []byte("A"))
+	u.StoreFile("file2", []byte("A"))
+
+	for i :=0; i < 50; i++ {
+		u.AppendFile("file1", []byte("append"))
+	}
+	userlib.DatastoreResetBandwidth()
+	u.AppendFile("file1", []byte("B"))
+	b1 = userlib.DatastoreGetBandwidth()
+	userlib.DatastoreResetBandwidth()
+	u.AppendFile("file2", []byte("B"))
+	b2 = userlib.DatastoreGetBandwidth()
+
+	difference = b1 - b2
+	if difference < 0 {
+		if -1*difference > 50 {
+			t.Error("Not an efficient append prev appends", b1, b2)
+			return
+		}
+	} else {
+		if difference > 50 {
+			t.Error("Not an efficient append prev appends", b1, b2)
+			return
+		}
+	}
+
+	//AppendFile cannot scale with the size of the previous append (from piazza)
+	u.StoreFile("file1", []byte("A"))
+	u.StoreFile("file2", []byte("A"))
+
+	u.AppendFile("file1", []byte("appendappendappendappendappendappendappendappendappend" +
+		"appendappendappendappendappendappendappendappendappend" + "appendappendappendappendappendappendappendappendappend" +
+		"appendappendappendappendappendappendappendappendappend" + "appendappendappendappendappendappendappendappendappend"))
+
+	userlib.DatastoreResetBandwidth()
+	u.AppendFile("file1", []byte("B"))
+	b1 = userlib.DatastoreGetBandwidth()
+	userlib.DatastoreResetBandwidth()
+	u.AppendFile("file2", []byte("B"))
+	b2 = userlib.DatastoreGetBandwidth()
+
+	difference = b1 - b2
+
+	if difference < 0 {
+		if -1*difference > 50 {
+			t.Error("Not an efficient append size prev appends", b1, b2)
+			return
+		}
+	} else {
+		if difference > 50 {
+			t.Error("Not an efficient append size prev appends", b1, b2)
+			return
+		}
+	}
+
 }
+
+
+//1. For tree_sk change to HKDF based on file name for different key based on files
+//2. Shared user should have access to file even if they don't call receivefile
+//3. Sharer should be able to revoke after sharing before reciepient calls receivefile
+//4. Add more stuff to append efficiency - shouldn't scale with number of appends

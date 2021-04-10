@@ -83,7 +83,7 @@ type Node struct {
 }
 
 type LL_node struct {
-	Data      []byte
+	Data      userlib.UUID
 	HMAC_Data []byte
 	Next      userlib.UUID
 }
@@ -501,10 +501,13 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 		iv := userlib.RandomBytes(16)
 		file_symm_data, _ := userlib.HashKDF(file_symm, []byte("encrypt data"))
 		file_symm_data = file_symm_data[:16]
-		data_node.Data = userlib.SymEnc(file_symm_data, iv, data)
+		location := uuid.New()
+		enc_d := userlib.SymEnc(file_symm_data, iv, data)
+		userlib.DatastoreSet(location, enc_d)
+		data_node.Data = location
 		file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
 		file_symm_data_HMAC = file_symm_data_HMAC[:16]
-		data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, data_node.Data)
+		data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, enc_d)
 		data_node.Next = uuid.Nil
 
 		random := userlib.RandomBytes(16)
@@ -518,7 +521,8 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 		json.Unmarshal(head, &linked_list)
 		loc := filedata.Head
 		for linked_list.Next != uuid.Nil {
-			calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+			ll_data, _ := userlib.DatastoreGet(linked_list.Data)
+			calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, ll_data)
 			if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 				return errors.New(strings.ToTitle("File contents have been corrupted."))
 			}
@@ -544,10 +548,13 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	iv := userlib.RandomBytes(16)
 	file_symm_data, _ := userlib.HashKDF(file_symm, []byte("encrypt data"))
 	file_symm_data = file_symm_data[:16]
-	data_node.Data = userlib.SymEnc(file_symm_data, iv, data)
+	location := uuid.New()
+	enc_d := userlib.SymEnc(file_symm_data, iv, data)
+	userlib.DatastoreSet(location, enc_d)
+	data_node.Data = location
 	file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
 	file_symm_data_HMAC = file_symm_data_HMAC[:16]
-	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, data_node.Data)
+	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, enc_d)
 	data_node.Next = uuid.Nil
 
 	random := userlib.RandomBytes(16)
@@ -645,8 +652,11 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	file_symm_data_HMAC, _ := userlib.HashKDF(file_symm, []byte("HMAC data"))
 	file_symm_data_HMAC = file_symm_data_HMAC[:16]
 
-	data_node.Data = userlib.SymEnc(file_symm_data, iv, data)
-	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, data_node.Data)
+	location := uuid.New()
+	enc_d := userlib.SymEnc(file_symm_data, iv, data)
+	userlib.DatastoreSet(location, enc_d)
+	data_node.Data = location
+	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, enc_d)
 	data_node.Next = uuid.Nil
 
 	random := userlib.RandomBytes(16)
@@ -710,14 +720,15 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 	curr_uuid := filedata.Head
 
 	for linked_list.Next != uuid.Nil && !found {
-		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+		ll_data, _ := userlib.DatastoreGet(linked_list.Data)
+		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, ll_data)
 		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 			return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
 		}
-		if !CheckMult16(linked_list.Data) {
+		if !CheckMult16(ll_data) {
 			return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in LoadFile."))
 		}
-		data := userlib.SymDec(file_symm_data, linked_list.Data)
+		data := userlib.SymDec(file_symm_data, ll_data)
 		data = Unpad(data)
 		dataBytes = append(dataBytes, data...)
 
@@ -732,14 +743,15 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 		if curr_uuid != filedata.Tail {
 			return nil, errors.New(strings.ToTitle("Did not complete going through the data."))
 		}
-		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+		ll_data, _ := userlib.DatastoreGet(linked_list.Data)
+		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, ll_data)
 		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 			return nil, errors.New(strings.ToTitle("File contents have been corrupted."))
 		}
-		if !CheckMult16(linked_list.Data) {
+		if !CheckMult16(ll_data) {
 			return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in LoadFile."))
 		}
-		data := userlib.SymDec(file_symm_data, linked_list.Data)
+		data := userlib.SymDec(file_symm_data, ll_data)
 		data = Unpad(data)
 		dataBytes = append(dataBytes, data...)
 	} else {
@@ -915,18 +927,21 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 	location := filedata.Head
 	for linked_list.Next != uuid.Nil {
-		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+		ll_data, _ := userlib.DatastoreGet(linked_list.Data)
+		calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, ll_data)
 		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 			return errors.New(strings.ToTitle("File contents have been corrupted in revoke."))
 		}
-		if !CheckMult16(linked_list.Data) {
+		if !CheckMult16(ll_data ) {
 			return errors.New(strings.ToTitle("Linked list data has been corrupted in RevokeFile."))
 		}
-		data := userlib.SymDec(file_symm_data, linked_list.Data)
+		data := userlib.SymDec(file_symm_data, ll_data)
 		iv := userlib.RandomBytes(16)
 		data = userlib.SymEnc(file_symm_new_data, iv, data)
 		data_HMAC, _ := userlib.HMACEval(file_symm_new_data_HMAC, data)
-		linked_list.Data = data
+		location_data := uuid.New()
+		userlib.DatastoreSet(location_data, data)
+		linked_list.Data = location_data
 		linked_list.HMAC_Data = data_HMAC
 		ll_marshalled, _ := json.Marshal(linked_list)
 		userlib.DatastoreSet(location, ll_marshalled)
@@ -934,18 +949,21 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 		location = linked_list.Next
 		json.Unmarshal(next, &linked_list)
 	}
-	calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, linked_list.Data)
+	ll_data, _ := userlib.DatastoreGet(linked_list.Data)
+	calc_HMAC, _ := userlib.HMACEval(file_symm_data_HMAC, ll_data)
 	if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 		return errors.New(strings.ToTitle("File contents have been corrupted in revoke end."))
 	}
-	if !CheckMult16(linked_list.Data) {
+	if !CheckMult16(ll_data) {
 		return errors.New(strings.ToTitle("Linked list data has been corrupted in RevokeFile."))
 	}
-	data := userlib.SymDec(file_symm_data, linked_list.Data)
+	data := userlib.SymDec(file_symm_data, ll_data)
 	iv := userlib.RandomBytes(16)
 	data = userlib.SymEnc(file_symm_new_data, iv, data)
 	data_HMAC, _ := userlib.HMACEval(file_symm_new_data_HMAC, data)
-	linked_list.Data = data
+	location_data := uuid.New()
+	userlib.DatastoreSet(location_data, data)
+	linked_list.Data = location_data
 	linked_list.HMAC_Data = data_HMAC
 	ll_marshalled, _ := json.Marshal(linked_list)
 	userlib.DatastoreSet(location, ll_marshalled)
