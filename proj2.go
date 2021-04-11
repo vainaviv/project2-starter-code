@@ -360,6 +360,9 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if len(username) <= 0 {
 		return nil, errors.New(strings.ToTitle("Username length is not valid."))
 	}
+	if len(password) <= 0 {
+		return nil, errors.New(strings.ToTitle("Password length is not valid."))
+	}
 
 	userdata.Username = username
 	pwd_bytes := []byte(password)
@@ -808,6 +811,24 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 
 	userlib.DatastoreSet(accessToken, encrypted_AT_marshaled)
 
+	Tree_pk, _ := userlib.KeystoreGet(string(owner) + "_treekey")
+	invite_AT, _ := json.Marshal(accessToken)
+	invite_AT_enc, _ := userlib.PKEEnc(Tree_pk, invite_AT)
+
+	var usernode Node
+	usernode.Username = recipient
+	usernode.User_invite_loc = invite_AT_enc
+	usernode.Children = nil
+
+	// set this user to be child of sender
+	sender_node := TreeSearch(&participants, userdata.Username)
+	if sender_node == nil {
+		return uuid.Nil, errors.New(strings.ToTitle("Sender does not have access to the file."))
+	}
+	sender_node.Children = append(sender_node.Children, &usernode)
+
+	DatastoreFile(file_id, file_owner_hash, file_symm, filedata)
+
 	return accessToken, nil
 }
 
@@ -849,36 +870,6 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	}
 	SetHashmap(filename, accessToken, userdata.Username, userdata.Files_key)
 
-	file_symm, file_id, file_owner_hash, owner, err := RetrieveAccessToken(userdata, filename)
-	if err != nil {
-		return err
-	}
-
-	filedata, err := RetrieveFile(file_owner_hash, file_symm, file_id)
-	if err != nil {
-		return err
-	}
-	Tree_pk, _ := userlib.KeystoreGet(string(owner) + "_treekey")
-	participants := filedata.Participants
-	invite_AT, _ := json.Marshal(accessToken)
-	invite_AT_enc, _ := userlib.PKEEnc(Tree_pk, invite_AT)
-
-	var usernode Node
-	usernode.Username = userdata.Username
-	usernode.User_invite_loc = invite_AT_enc
-	usernode.Children = nil
-
-	// set this user to be child of sender
-	sender_node := TreeSearch(&participants, sender)
-	if sender_node == nil {
-		return errors.New(strings.ToTitle("Sender does not have access to the file."))
-	}
-	sender_node.Children = append(sender_node.Children, &usernode)
-
-	pk, _ := userlib.KeystoreGet(userdata.Username + "_enckey")
-
-	DatastoreFile(file_id, file_owner_hash, file_symm, filedata)
-	DatastoreUser(userdata, pk)
 	return nil
 }
 
@@ -932,7 +923,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 		if string(calc_HMAC) != string(linked_list.HMAC_Data) {
 			return errors.New(strings.ToTitle("File contents have been corrupted in revoke."))
 		}
-		if !CheckMult16(ll_data ) {
+		if !CheckMult16(ll_data) {
 			return errors.New(strings.ToTitle("Linked list data has been corrupted in RevokeFile."))
 		}
 		data := userlib.SymDec(file_symm_data, ll_data)

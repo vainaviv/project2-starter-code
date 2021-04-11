@@ -365,7 +365,6 @@ func TestMultipleUserSessions(t *testing.T) {
 	}
 }
 
-/*
 func TestMultipleUserSessions_2(t *testing.T) {
 	clear()
 
@@ -419,8 +418,76 @@ func TestMultipleUserSessions_2(t *testing.T) {
 		return
 	}
 
+	err = bob1.ReceiveFile("file1", "alice", accessToken)
+	if err != nil {
+		t.Error("Bob1 failed to reeive from Alice2", err)
+		return
+	}
 
-}*/
+	bob_v := []byte("Bob2 appending")
+	err = bob2.AppendFile("file1", bob_v)
+	if err != nil {
+		t.Error("Bob2 failed to append to file1", err)
+		return
+	}
+
+	bob_v = []byte("Bob1 appending")
+	err = bob1.AppendFile("file1", bob_v)
+	if err != nil {
+		t.Error("Bob1 failed to append to file1", err)
+		return
+	}
+
+	alice_v := []byte("Alice1 appending")
+	err = alice1.AppendFile("file1", alice_v)
+	if err != nil {
+		t.Error("Alice1 failed to append to file1", err)
+		return
+	}
+
+	alice_v = []byte("Alice2 appending")
+	err = alice2.AppendFile("file1", alice_v)
+	if err != nil {
+		t.Error("Alice2 failed to append to file1", err)
+		return
+	}
+
+	data_bob1, err := bob1.LoadFile("file1")
+	if err != nil {
+		t.Error("Bob1 failed to load file1", err)
+		return
+	}
+
+	expected_v := []byte("This is my fileBob2 appendingBob1 appendingAlice1 appendingAlice2 appending")
+	if !reflect.DeepEqual(data_bob1, expected_v) {
+		t.Error("files are not equal", data_bob1, expected_v)
+		return
+	}
+
+	data_alice2, err := alice2.LoadFile("file1")
+	if err != nil {
+		t.Error("Alice2 failed to load file1", err)
+		return
+	}
+
+	if !reflect.DeepEqual(data_alice2, expected_v) {
+		t.Error("files are not equal", data_alice2, expected_v)
+		return
+	}
+
+	//alice1 revoke from bob2
+	err = alice1.RevokeFile("file1", "bob")
+	if err != nil {
+		t.Error("Alice1 failed to revoke from Bob.", err)
+		return
+	}
+
+	_, err = alice2.LoadFile("file1")
+	if err != nil {
+		t.Error("Alice2 failed to load file1", err)
+		return
+	}
+}
 
 func TestStorage(t *testing.T) {
 	clear()
@@ -2753,13 +2820,13 @@ func TestAppendEfficiency(t *testing.T) {
 	userlib.DatastoreResetBandwidth()
 	u.StoreFile("file1", []byte("Orig data"))
 
-	for i :=0; i < 50; i++ {
+	for i := 0; i < 50; i++ {
 		u.AppendFile("file1", []byte("append"))
 	}
 
 	b1 = userlib.DatastoreGetBandwidth()
 	userlib.DatastoreResetBandwidth()
-	for i :=50; i < 100; i++ {
+	for i := 50; i < 100; i++ {
 		u.AppendFile("file1", []byte("append"))
 	}
 
@@ -2782,7 +2849,7 @@ func TestAppendEfficiency(t *testing.T) {
 	u.StoreFile("file1", []byte("A"))
 	u.StoreFile("file2", []byte("A"))
 
-	for i :=0; i < 50; i++ {
+	for i := 0; i < 50; i++ {
 		u.AppendFile("file1", []byte("append"))
 	}
 	userlib.DatastoreResetBandwidth()
@@ -2809,9 +2876,9 @@ func TestAppendEfficiency(t *testing.T) {
 	u.StoreFile("file1", []byte("A"))
 	u.StoreFile("file2", []byte("A"))
 
-	u.AppendFile("file1", []byte("appendappendappendappendappendappendappendappendappend" +
-		"appendappendappendappendappendappendappendappendappend" + "appendappendappendappendappendappendappendappendappend" +
-		"appendappendappendappendappendappendappendappendappend" + "appendappendappendappendappendappendappendappendappend"))
+	u.AppendFile("file1", []byte("appendappendappendappendappendappendappendappendappend"+
+		"appendappendappendappendappendappendappendappendappend"+"appendappendappendappendappendappendappendappendappend"+
+		"appendappendappendappendappendappendappendappendappend"+"appendappendappendappendappendappendappendappendappend"))
 
 	userlib.DatastoreResetBandwidth()
 	u.AppendFile("file1", []byte("B"))
@@ -2836,8 +2903,114 @@ func TestAppendEfficiency(t *testing.T) {
 
 }
 
+func TestNilUser(t *testing.T) {
+	clear()
 
-//1. For tree_sk change to HKDF based on file name for different key based on files
-//2. Shared user should have access to file even if they don't call receivefile
-//3. Sharer should be able to revoke after sharing before reciepient calls receivefile
-//4. Add more stuff to append efficiency - shouldn't scale with number of appends
+	_, err := InitUser("", "hello")
+	if err == nil {
+		t.Error("Didn't catch that we can't have empty username", err)
+		return
+	}
+
+	_, err = InitUser("alice", "")
+	if err == nil {
+		t.Error("Didn't catch that we can't have empty password", err)
+		return
+	}
+}
+
+func TestEmptyFilename(t *testing.T) {
+	clear()
+
+	alice, err := InitUser("alice", "hello")
+	if err != nil {
+		t.Error("Can't create user alice", err)
+		return
+	}
+
+	bob, err := InitUser("bob", "hello")
+	if err != nil {
+		t.Error("Can't create user bob ", err)
+		return
+	}
+
+	v := []byte("Storing to an empty file name")
+	err = alice.StoreFile("", v)
+	if err != nil {
+		t.Error("failed to store with an empty filename", err)
+		return
+	}
+
+	_, err = alice.LoadFile("")
+	if err != nil {
+		t.Error("failed to load with an empty filename", err)
+		return
+	}
+
+	accessToken, err := alice.ShareFile("", "bob")
+	if err != nil {
+		t.Error("failed to share with an empty filename", err)
+		return
+	}
+
+	err = bob.ReceiveFile("", "alice", accessToken)
+	if err != nil {
+		t.Error("failed to receive with an empty filename", err)
+		return
+	}
+
+	bob_v := []byte("Bob's appending to an empty filename!")
+	err = bob.AppendFile("", bob_v)
+	if err != nil {
+		t.Error("failed to append with an empty filename", err)
+		return
+	}
+
+	err = alice.RevokeFile("", "bob")
+	if err != nil {
+		t.Error("failed to revoke bob from an empty filename", err)
+		return
+	}
+}
+
+func TestShareRevoke(t *testing.T) {
+	clear()
+
+	alice, err := InitUser("alice", "hello")
+	if err != nil {
+		t.Error("Can't create user alice", err)
+		return
+	}
+
+	bob, err := InitUser("bob", "hello")
+	if err != nil {
+		t.Error("Can't create user bob ", err)
+		return
+	}
+
+	v := []byte("Storing to an empty file name")
+	err = alice.StoreFile("", v)
+	if err != nil {
+		t.Error("failed to store with an empty filename", err)
+		return
+	}
+
+	_, err = alice.ShareFile("", "bob")
+	if err != nil {
+		t.Error("failed to share with an empty filename", err)
+		return
+	}
+
+	err = alice.RevokeFile("", "bob")
+	if err != nil {
+		t.Error("failed to revoke bob from an empty filename", err)
+		return
+	}
+
+	_, err = bob.LoadFile("")
+	if err == nil {
+		t.Error("did not correctly revoke from bob", err)
+		return
+	}
+
+}
