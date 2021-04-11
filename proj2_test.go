@@ -48,6 +48,20 @@ func TestInit(t *testing.T) {
 		return
 	}
 
+	u, err = InitUser("Alice", "pingpong")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to be case sensitive to usernames", err)
+		return
+	}
+
+	u, err = InitUser("AliCe", "pingpong")
+	if err != nil {
+		// t.Error says the test fails
+		t.Error("Failed to be case sensitive to usernames", err)
+		return
+	}
+
 	u, err = InitUser("", "pingpong")
 	if err == nil {
 		// t.Error says the test fails
@@ -2672,6 +2686,65 @@ func TestFuzzDatastore(t *testing.T) {
 	}
 }
 
+func TestSwapDatastore(t *testing.T) {
+	clear()
+
+	userlib.SetDebugStatus(true)
+	//// Initialize and edit datastore
+	u, err := InitUser("alice", "foobar")
+	if err != nil {
+		t.Error("Failed to initialize alice", err)
+		return
+	}
+
+	ds := userlib.DatastoreGetMap()
+	ds_orig := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig[k] = v
+	}
+
+	//////// Get node 1
+	v := []byte("Alice's file")
+	err = u.StoreFile("file1", v)
+	if err != nil {
+		t.Error("Failed to store", err)
+		return
+	}
+
+	ds = userlib.DatastoreGetMap()
+	ds_orig2 := make(map[uuid.UUID][]byte)
+	for k, v := range ds {
+		ds_orig2[k] = v
+	}
+
+	diff := []uuid.UUID{}
+
+	for k, _ := range ds_orig2 {
+		if _, ok := ds_orig[k]; !ok {
+			diff = append(diff, k)
+		}
+	}
+
+	for i := 0; i < len(diff)-1; i += 1 {
+		elem1 := diff[i]
+		element1, _ := userlib.DatastoreGet(elem1)
+		elem2 := diff[i+1]
+		element2, _ := userlib.DatastoreGet(elem2)
+
+		userlib.DatastoreSet(elem1, element2)
+		userlib.DatastoreSet(elem2, element1)
+
+		_, err = u.LoadFile("file1")
+		if err == nil {
+			t.Error("Failed to recognize datastore swap", err)
+			return
+		}
+
+		userlib.DatastoreSet(elem1, element1)
+		userlib.DatastoreSet(elem2, element2)
+	}
+}
+
 // initialize alice and bob
 // create file --> obtain diff which will have file related stuff
 // corrupt, share, revoke error in a for loop
@@ -3010,6 +3083,90 @@ func TestShareRevoke(t *testing.T) {
 	_, err = bob.LoadFile("")
 	if err == nil {
 		t.Error("did not correctly revoke from bob", err)
+		return
+	}
+
+}
+
+func TestRevokeAttack(t *testing.T) {
+	clear()
+
+	alice, err := InitUser("alice", "hello")
+	if err != nil {
+		t.Error("Can't create user alice", err)
+		return
+	}
+
+	bob, err := InitUser("bob", "hello")
+	if err != nil {
+		t.Error("Can't create user bob ", err)
+		return
+	}
+
+	v := []byte("Storing to an empty file name")
+	err = alice.StoreFile("", v)
+	if err != nil {
+		t.Error("failed to store with an empty filename", err)
+		return
+	}
+
+	accessToken, err := alice.ShareFile("", "bob")
+	if err != nil {
+		t.Error("failed to share with an empty filename", err)
+		return
+	}
+
+	err = bob.ReceiveFile("", "alice", accessToken)
+	if err != nil {
+		t.Error("did not correctly revoke from bob", err)
+		return
+	}
+
+	_, err = bob.LoadFile("")
+	if err != nil {
+		t.Error("Bob failed to load file", err)
+		return
+	}
+
+	err = alice.RevokeFile("", "bob")
+	if err != nil {
+		t.Error("failed to revoke bob from an empty filename", err)
+		return
+	}
+
+	err = bob.ReceiveFile("", "alice", accessToken)
+	if err == nil {
+		t.Error("did not correctly revoke from bob", err)
+		return
+	}
+
+}
+
+func TestDifUsersSameFile(t *testing.T) {
+	clear()
+
+	alice, err := InitUser("alice", "hello")
+	if err != nil {
+		t.Error("Can't create user alice", err)
+		return
+	}
+
+	bob, err := InitUser("bob", "hello")
+	if err != nil {
+		t.Error("Can't create user bob ", err)
+		return
+	}
+
+	v := []byte("Storing to an empty file name")
+	err = alice.StoreFile("", v)
+	if err != nil {
+		t.Error("failed to store with an empty filename", err)
+		return
+	}
+
+	err = bob.StoreFile("", v)
+	if err != nil {
+		t.Error("failed to store with an empty filename", err)
 		return
 	}
 
