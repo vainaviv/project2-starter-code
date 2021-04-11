@@ -560,8 +560,7 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 	data_node.HMAC_Data, _ = userlib.HMACEval(file_symm_data_HMAC, enc_d)
 	data_node.Next = uuid.Nil
 
-	random := userlib.RandomBytes(16)
-	data_loc := bytesToUUID(random)
+	data_loc := uuid.New()
 
 	data_node_marshal, _ := json.Marshal(data_node)
 	userlib.DatastoreSet(data_loc, data_node_marshal)
@@ -577,10 +576,10 @@ func (userdata *User) StoreFile(filename string, data []byte) (err error) {
 
 	signing_sk := userdata.Signing_sk
 
-	user_hash := userlib.Hash(append([]byte(userdata.Username), []byte("accessToken")...))
-	key_hash := userlib.Hash(append(file_id, user_hash[:]...))
+	// user_hash := userlib.Hash(append([]byte(userdata.Username), []byte("accessToken")...))
+	// key_hash := userlib.Hash(append(file_id, user_hash[:]...))
 
-	accessToken, _ := uuid.FromBytes(key_hash[:16])
+	accessToken := uuid.New()
 	encrypted_file_symm, _ := userlib.PKEEnc(pk, file_symm)
 	encrypted_file_id, _ := userlib.PKEEnc(pk, file_id)
 	encrypted_file_owner, _ := userlib.PKEEnc(pk, []byte(userdata.Username))
