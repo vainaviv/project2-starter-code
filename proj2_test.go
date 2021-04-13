@@ -1234,6 +1234,197 @@ func TestRevoke_4(t *testing.T) {
 
 }
 
+func TestRevoke_5 (t *testing.T) {
+	clear()
+
+	// initalize users
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	/////////////////
+
+	//alice create file
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	//////////////////
+
+	// alice shares with bob
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	//alice revokes from bob
+	err = u.RevokeFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to revoke from bob", err)
+		return
+	}
+
+	//bob attempts to load
+	_, err = u2.LoadFile("file2")
+	if err == nil {
+		t.Error("Failed to correctly revoke from Bob.", err)
+		return
+	}
+
+	//bob attempts to receive
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err == nil {
+		t.Error("Bob was able to receive after being revoked", err)
+		return
+	}
+
+	//bob tries to append
+	err = u2.AppendFile("file2",[]byte("this should not be appended"))
+	if err == nil {
+		t.Error("Bob was able to append after being revoked", err)
+		return
+	}
+
+	//alice loads to make sure bob didn't append
+	alice_v, err := u.LoadFile("file1")
+	if err != nil {
+		t.Error("Alice failed to correctly load.", err)
+		return
+	}
+
+	if !reflect.DeepEqual(v, alice_v) {
+		t.Error("Shared file is not the same", v, alice_v)
+		return
+	}
+
+	//bob attempts to share
+	_, err3 := InitUser("charlie", "foobar")
+	if err3 != nil {
+		t.Error("Failed to initialize charlie", err3)
+		return
+	}
+
+	accessToken, err = u2.ShareFile("file2", "charlie")
+	if err == nil {
+		t.Error("Bob was able to share after being revoked", err)
+		return
+	}
+
+	//bob attempts to revoke
+	err = u2.RevokeFile("file2", "alice")
+	if err == nil {
+		t.Error("Bob was able to revoke from alice after being revoked", err)
+		return
+	}
+
+	bob_new_v := []byte("Bob's file")
+	err = u2.StoreFile("file2", bob_new_v)
+	if err == nil {
+		t.Error("Bob was able to overwrite after being revoked", err)
+		return
+	}
+
+}
+
+func TestShareReceiveOrder(t *testing.T) {
+	clear()
+
+	// initalize users
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+	/////////////////
+
+	//alice create file
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+	//////////////////
+
+	// alice shares with bob
+	accessToken, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	//bob tries to receive again
+	err = u2.ReceiveFile("file2", "alice", accessToken)
+	if err == nil {
+		t.Error("Bob was able to receive twice", err)
+		return
+	}
+
+	//bob tries to receive same file under a different name
+	err = u2.ReceiveFile("file4", "alice", accessToken)
+	if err != nil {
+		t.Error("Bob was not able to same file under different name", err)
+		return
+	}
+
+	//alice tries to receive her own file
+	err = u.ReceiveFile("file1", "alice", accessToken)
+	if err == nil {
+		t.Error("Alice was able to receive her own file under same name", err)
+		return
+	}
+
+	err = u.ReceiveFile("file2", "alice", accessToken)
+	if err == nil {
+		t.Error("Alice was able to receive her own file under different name", err)
+		return
+	}
+
+	err = u.ReceiveFile("file3", "bob", accessToken)
+	if err == nil {
+		t.Error("Alice was able to receive her own file from bob as sender", err)
+		return
+	}
+
+	//Charlie tries to receive accessToken intended for bob
+	u3, err3 := InitUser("charlie", "foobar")
+	if err3 != nil {
+		t.Error("Failed to initialize charlie", err3)
+		return
+	}
+	err = u3.ReceiveFile("file3", "alice", accessToken)
+	if err == nil {
+		t.Error("Charlie was able to receive intended for Bob.", err)
+		return
+	}
+
+	//bob tries to share with alice
+	accessToken, err = u2.ShareFile("file2", "alice")
+	if err == nil {
+		t.Error("Bob was able to share alice's file with alice", err)
+		return
+	}
+
+}
+
 func TestRevokeShare(t *testing.T) {
 	// test error check: share, revoke, reshare
 	clear()

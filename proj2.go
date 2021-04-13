@@ -116,9 +116,11 @@ type AccessToken struct {
 	Enc_file_symm     []byte
 	Enc_file_id       []byte
 	Enc_file_owner    []byte
+	Enc_recipient			[]byte
 	Signed_file_symm  []byte
 	Signed_file_id    []byte
 	Signed_file_owner []byte
+	Signed_recipient	[]byte
 	// Enc_keys    []byte
 	// Signed_keys []byte
 }
@@ -154,6 +156,13 @@ func CheckMult16(text []byte) (mult bool) {
 		}
 	}
 	return false
+}
+
+func CheckRange(text []byte) (mult bool) {
+	if text[len(text)-1] > 16 || text[len(text)-1] < 1 {
+		return false
+	}
+	return true
 }
 
 func TreeSearch(participants *Tree, username string) (node *Node) {
@@ -200,6 +209,9 @@ func RetrieveHashmap(username string, files_key []byte) (files map[string]userli
 		return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in RevokeFile."))
 	}
 	marshalled_files := userlib.SymDec(dec_key[:16], enc_marshalled_files)
+	if !CheckRange(marshalled_files) {
+		return nil, errors.New(strings.ToTitle("Linked list data is not correctly decrypted."))
+	}
 	marshalled_files = Unpad(marshalled_files)
 	json.Unmarshal(marshalled_files, &files)
 	return files, nil
@@ -240,6 +252,9 @@ func RetrieveFile(owner_hash []byte, file_symm []byte, file_id []byte) (filedata
 		return nil, errors.New(strings.ToTitle("File has been corrupted in RetrieveFile."))
 	}
 	dataJSON_dec := userlib.SymDec(file_symm_struct, dataJSON)
+	if !CheckRange(dataJSON_dec) {
+		return nil, errors.New(strings.ToTitle("Linked list data is not correctly decrypted."))
+	}
 	dataJSON_dec = Unpad(dataJSON_dec)
 	var filedata File
 	filedataptr = &filedata
@@ -465,6 +480,9 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 			return nil, errors.New(strings.ToTitle("User has been corrupted in GetUser."))
 		}
 		user = userlib.SymDec(userlib.Argon2Key(pwd_bytes, salt, 32), user)
+		if !CheckRange(user) {
+			return nil, errors.New(strings.ToTitle("User data is not correctly decrypted."))
+		}
 		user = Unpad(user)
 		_ = json.Unmarshal(user, userdataptr)
 
@@ -731,6 +749,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 			return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in LoadFile."))
 		}
 		data := userlib.SymDec(file_symm_data, ll_data)
+		if !CheckRange(data) {
+			return nil, errors.New(strings.ToTitle("Linked list data is not correctly decrypted."))
+		}
 		data = Unpad(data)
 		dataBytes = append(dataBytes, data...)
 
@@ -754,6 +775,9 @@ func (userdata *User) LoadFile(filename string) (dataBytes []byte, err error) {
 			return nil, errors.New(strings.ToTitle("Linked list data has been corrupted in LoadFile."))
 		}
 		data := userlib.SymDec(file_symm_data, ll_data)
+		if !CheckRange(data) {
+			return nil, errors.New(strings.ToTitle("Linked list data is not correctly decrypted."))
+		}
 		data = Unpad(data)
 		dataBytes = append(dataBytes, data...)
 	} else {
@@ -793,17 +817,21 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 	encrypted_file_symm, _ := userlib.PKEEnc(recipient_pk, file_symm)
 	encrypted_file_id, _ := userlib.PKEEnc(recipient_pk, file_id)
 	encrypted_file_owner, _ := userlib.PKEEnc(recipient_pk, owner)
+	encrypted_recipient, _ := userlib.PKEEnc(recipient_pk, []byte(recipient))
 	signed_enc_file_symm, _ := userlib.DSSign(signing_sk, encrypted_file_symm)
 	signed_enc_file_id, _ := userlib.DSSign(signing_sk, encrypted_file_id)
 	signed_enc_file_owner, _ := userlib.DSSign(signing_sk, encrypted_file_owner)
+	signed_recipient, _ := userlib.DSSign(signing_sk, encrypted_recipient)
 
 	var encrypted_AT_struct AccessToken
 	encrypted_AT_struct.Enc_file_symm = encrypted_file_symm
 	encrypted_AT_struct.Enc_file_id = encrypted_file_id
 	encrypted_AT_struct.Enc_file_owner = encrypted_file_owner
+	encrypted_AT_struct.Enc_recipient = encrypted_recipient
 	encrypted_AT_struct.Signed_file_symm = signed_enc_file_symm
 	encrypted_AT_struct.Signed_file_id = signed_enc_file_id
 	encrypted_AT_struct.Signed_file_owner = signed_enc_file_owner
+	encrypted_AT_struct.Signed_recipient = signed_recipient
 	encrypted_AT_marshaled, _ := json.Marshal(encrypted_AT_struct)
 
 	accessToken = uuid.New()
@@ -866,6 +894,15 @@ func (userdata *User) ReceiveFile(filename string, sender string,
 	err = userlib.DSVerify(sender_verkey, AT.Enc_file_owner, AT.Signed_file_owner)
 	if err != nil {
 		return err
+	}
+	err = userlib.DSVerify(sender_verkey, AT.Enc_recipient, AT.Signed_recipient)
+	if err != nil {
+		return err
+	}
+	recipient_sk := userdata.Secret_key
+	intended_recipient, _ := userlib.PKEDec(recipient_sk, AT.Enc_recipient)
+	if string(intended_recipient) != userdata.Username {
+		return errors.New(strings.ToTitle("This user is not the intended recipient."))
 	}
 	SetHashmap(filename, accessToken, userdata.Username, userdata.Files_key)
 
