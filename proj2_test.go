@@ -1234,7 +1234,7 @@ func TestRevoke_4(t *testing.T) {
 
 }
 
-func TestRevoke_5 (t *testing.T) {
+func TestRevoke_5(t *testing.T) {
 	clear()
 
 	// initalize users
@@ -1290,7 +1290,7 @@ func TestRevoke_5 (t *testing.T) {
 	}
 
 	//bob tries to append
-	err = u2.AppendFile("file2",[]byte("this should not be appended"))
+	err = u2.AppendFile("file2", []byte("this should not be appended"))
 	if err == nil {
 		t.Error("Bob was able to append after being revoked", err)
 		return
@@ -3361,4 +3361,46 @@ func TestDifUsersSameFile(t *testing.T) {
 		return
 	}
 
+}
+
+func TestNonExistentUsers(t *testing.T) {
+	clear()
+
+	_, err := GetUser("alice", "i totally exist")
+	if err == nil {
+		t.Error("Failed to recognize Alice is not a real user to get.", err)
+		return
+	}
+
+	v := []byte("dummy data")
+
+	InitUser("dummy", "hello")
+	charlie, _ := InitUser("charlie", "fubar")
+
+	// existent user share with non-existent
+	err = charlie.StoreFile("file2", v)
+	if err != nil {
+		t.Error("Failed to store file for Charlie.", err)
+		return
+	}
+	_, err = charlie.ShareFile("file2", "alice")
+	if err == nil {
+		t.Error("Failed to recognize Charlie cannot share with Alice who DNE.", err)
+		return
+	}
+	// non-existent receive from existent
+	accessToken, _ := charlie.ShareFile("file2", "dummy")
+
+	err = charlie.ReceiveFile("file2", "alice", accessToken)
+	if err == nil {
+		t.Error("Failed to recognize Alice DNE so can't receive from Charlie.", err)
+		return
+	}
+
+	// existent tries to revoke from non-existent
+	err = charlie.RevokeFile("file2", "bob")
+	if err == nil {
+		t.Error("Failed to recognize Charlie cannot revoke from Bob because Bob DNE.", err)
+		return
+	}
 }
